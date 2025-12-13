@@ -1,0 +1,7 @@
+{
+    "product": "Natural Gas Prop G5",
+    "version": "5.1.0",
+    "date": "2025-12-14",
+    "download_url": "https://github.com/SLedgehammer-dev12/Programlar/tree/Natural-Gas-Prop",
+    "changelog": "Versiyon 5.1.0:\n- Gelişmiş Standartlar (ISO, API, GPA...)\n- NCM/SCM Hacim Dönüşümü\n- Kaydet/Yükle Özelliği\n- Canlı Loglar\n- Hata düzeltmeleri"
+}

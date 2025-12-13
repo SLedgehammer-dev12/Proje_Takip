@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "composition": [
+    {
+      "name": "Methane",
+      "fraction": 95.0
+    },
+    {
+      "name": "Ethane",
+      "fraction": 5.0
+    }
+  ],
+  "fraction_type": "molar",
+  "standard": "ISO 13443 (15°C, 1 atm)",
+  "temperature": {
+    "value": 15.0,
+    "unit": "°C"
+  },
+  "pressure": {
+    "value": 1.01325,
+    "unit": "bar(a)"
+  },
+  "volume": "1",
+  "backend": "HEOS"
+}
