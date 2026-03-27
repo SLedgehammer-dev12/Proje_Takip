@@ -1,0 +1,75 @@
+# Database Files (Gizlilik - Privacy)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+projeler.db*
+
+# Excel Data Files (Gizlilik - Privacy)
+# Ignore Excel files and do NOT allow whitelisted Excel files to be tracked
+*.xlsx
+*.xls
+
+# Backup Files (Gizlilik - Privacy)
+veritabani_yedekleri/
+yedekler/
+*.backup
+*.bak
+
+# PDF Reports (Gizlilik - Privacy)
+*.pdf
+raporlar/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+temp/
+tmp/
+
+# Tests (don't push test code)
+tests/
+test_*.py
+tools/test_*.py
+
+# OS
+Thumbs.db
+desktop.ini
