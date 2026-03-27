@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 import os
 import sys
-from PySide6.QtGui import QFont, QIcon, QKeySequence
+from PySide6.QtGui import QActionGroup, QFont, QIcon, QKeySequence
 
 from app_paths import get_resource_path
 from widgets import ZoomableScrollArea, WatermarkedPanelContainer
@@ -725,38 +725,44 @@ def _setup_menubar(self):
 
         toggle_action.triggered.connect(_toggle)
         gorunum_menu.addAction(toggle_action)
-        # TOK theme toggle (light <-> dark)
-        # Tok theme toggle - show current state text and icon
-        initial_tok_variant = getattr(self, "_tok_variant", "light")
-        tok_label = "Tok: Koyu" if initial_tok_variant == "dark" else "Tok: Açık"
-        tok_icon = QIcon.fromTheme("weather-night") if initial_tok_variant == "dark" else QIcon.fromTheme("weather-clear")
-        tok_action = QAction(tok_label, self)
-        tok_action.setIcon(tok_icon)
-        tok_action.setCheckable(True)
+        from ui.styles import get_available_tok_variants, get_tok_variant_meta
 
-        def _tok_toggled(checked):
-            try:
-                self.toggle_tok_theme()
-                # Update action text and icon to reflect new state
-                try:
-                    label = "Tok: Koyu" if checked else "Tok: Açık"
-                    ico = QIcon.fromTheme("weather-night") if checked else QIcon.fromTheme("weather-clear")
-                    tok_action.setText(label)
-                    tok_action.setIcon(ico)
-                except Exception:
-                    pass
-            except Exception:
-                pass
-
-        tok_action.triggered.connect(_tok_toggled)
+        initial_meta = get_tok_variant_meta(getattr(self, "_tok_variant", "light"))
+        tok_action = QAction(f"Tema: {initial_meta['label']}", self)
+        tok_action.setIcon(QIcon.fromTheme(initial_meta.get("icon", "")))
+        tok_action.triggered.connect(self.toggle_tok_theme)
         self.tok_action = tok_action
-        # reflect current variant if set on window
+        gorunum_menu.addAction(tok_action)
+
+        theme_menu = gorunum_menu.addMenu(
+            QIcon.fromTheme("preferences-desktop-theme"),
+            "TOK Temalari",
+        )
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        self.tok_theme_actions = {}
+        for meta in get_available_tok_variants():
+            action = QAction(meta["label"], self)
+            action.setCheckable(True)
+            action.setIcon(QIcon.fromTheme(meta.get("icon", "")))
+
+            def _apply_theme(checked, variant=meta["key"]):
+                if checked:
+                    try:
+                        self.set_tok_theme_variant(variant)
+                    except Exception:
+                        pass
+
+            action.triggered.connect(_apply_theme)
+            theme_group.addAction(action)
+            theme_menu.addAction(action)
+            self.tok_theme_actions[meta["key"]] = action
+
+        self.tok_theme_action_group = theme_group
         try:
-            is_dark = getattr(self, "_tok_variant", "light") == "dark"
-            self.tok_action.setChecked(is_dark)
+            self._refresh_tok_theme_actions()
         except Exception:
             pass
-        gorunum_menu.addAction(tok_action)
         # Add a reset layout action
         reset_action = QAction("Düzeni Sıfırla", self)
         reset_action.triggered.connect(

@@ -47,7 +47,9 @@ from config import APP_NAME, APP_VERSION, CHANGELOG
 if os.name == 'nt':
     try:
         # AppUserModelID belirlemezsek Windows görev çubuğunda jenerik ikon gösterir.
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f'sledgehammer.{APP_NAME}.v2')
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "com.botas.projetakipsistemi"
+        )
     except Exception:
         pass
 
@@ -109,6 +111,7 @@ def main():
         icon_path = get_internal_path("app_icon.ico")
         if os.path.exists(icon_path):
             app.setWindowIcon(QIcon(icon_path))
+        app.setApplicationDisplayName(APP_NAME)
 
         # Apply theme + log styling if available
         _apply_stylesheet(app)
@@ -129,6 +132,8 @@ def main():
         from PySide6.QtWidgets import QDialog
         
         login_dialog = LoginDialog(auth_service)
+        if not app.windowIcon().isNull():
+            login_dialog.setWindowIcon(app.windowIcon())
         if login_dialog.exec() != QDialog.Accepted:
             # User cancelled login - exit application
             logger.info("Login cancelled, exiting application")
@@ -140,6 +145,8 @@ def main():
 
         # Create main window after successful login
         pencere = AnaPencere(db_dosyasi=last_db, db=db, auth_service=auth_service)
+        if not app.windowIcon().isNull():
+            pencere.setWindowIcon(app.windowIcon())
         
         # Setup UI permissions based on logged in user
         pencere._setup_permissions()

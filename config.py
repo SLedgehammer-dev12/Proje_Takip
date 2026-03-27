@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v2.1.2"
+APP_VERSION = "v2.1.3"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
 AI_AGENT = "GitHub Copilot"
 CHANGELOG_FILE = "guncelleme_notlari.txt"
@@ -38,6 +38,11 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v2.1.3": [
+        "GUNCELLEME: Baslangicta otomatik guncelleme kontrolu daha gorunur hale getirildi; yeni surum bulundugunda artik diyalog aciliyor.",
+        "TEMALAR: TOK tema sistemi 5 varyanta genisletildi (Kurumsal Acik, Gece Mavisi, Gundogumu, Cam Yesili, Celik Gri).",
+        "IKON: Uygulama exe ve gorev cubugu ikonu BOTAŞ amblemini kullanan yeni ico setine gecirildi.",
+    ],
     "v2.1.2": [
         "ARAYUZ: BOTAS filigrani uc ana panelde ayri ve daha kucuk arka plan ogesi olarak duzenlendi.",
         "PREVIEW: Proje ve revizyon on izleme ile tam ekran goster akislari yeniden stabilize edildi.",

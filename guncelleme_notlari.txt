@@ -1,6 +1,11 @@
 PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
 
+--- Sürüm: v2.1.3 ---
+  * GUNCELLEME: Baslangicta otomatik guncelleme kontrolu daha gorunur hale getirildi; yeni surum bulundugunda artik diyalog aciliyor.
+  * TEMALAR: TOK tema sistemi 5 varyanta genisletildi (Kurumsal Acik, Gece Mavisi, Gundogumu, Cam Yesili, Celik Gri).
+  * IKON: Uygulama exe ve gorev cubugu ikonu BOTAŞ amblemini kullanan yeni ico setine gecirildi.
+
 --- Sürüm: v2.1.2 ---
   * ARAYUZ: BOTAS filigrani uc ana panelde ayri ve daha kucuk arka plan ogesi olarak duzenlendi.
   * PREVIEW: Proje ve revizyon on izleme ile tam ekran goster akislari yeniden stabilize edildi.
