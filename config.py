@@ -44,6 +44,7 @@ CHANGELOG = {
         "ARAYUZ: Uygulamaya kalici Turkce/Ingilizce dil secimi eklendi; ana menu, paneller ve kritik dialoglar secilen dile gore guncelleniyor.",
         "METIN: Eski kodlama bozulmalarini onaran merkezi i18n katmani eklendi; gorunur mojibake metinlerin buyuk kismi duzeltildi.",
         "GUNCELLEME: GitHub release/updater sozlesmesi v2.1.6 ile surduruldu; v2.1.5 istemcileri yeni checksum'li pakete guncellenebilecek.",
+        "TLS: GitHub update kontrolu ve asset indirme akisi, eksik yerel sertifika zincirlerinde certifi CA bundle fallback'i ile daha dayanikli hale getirildi.",
     ],
     "v2.1.5": [
         "PERFORMANS: Yazi on izleme akisi ana revizyon on izlemesinden ayrildi; hizli satir dolasiminda gereksiz ikinci PDF render ve BLOB okuma yuku azaltildi.",

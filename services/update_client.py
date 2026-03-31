@@ -27,7 +27,9 @@ import json
 import os
 import re
 import hashlib
+import ssl
 import shutil
+import subprocess
 import tempfile
 import time
 import urllib.error
@@ -43,6 +45,175 @@ def _get_github_headers() -> Dict[str, str]:
     return headers
 
 
+def _should_retry_with_certifi(error: BaseException) -> bool:
+    if isinstance(error, ssl.SSLCertVerificationError):
+        return True
+    if isinstance(error, urllib.error.URLError):
+        return _should_retry_with_certifi(error.reason)
+    if isinstance(error, ssl.SSLError):
+        return "CERTIFICATE_VERIFY_FAILED" in str(error)
+    return False
+
+
+def _build_ssl_context_with_certifi() -> Optional[ssl.SSLContext]:
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
+def _should_retry_with_curl(error: BaseException) -> bool:
+    if _should_retry_with_certifi(error):
+        return True
+    if isinstance(error, urllib.error.URLError):
+        text = str(error.reason).lower()
+        return any(
+            marker in text
+            for marker in (
+                "certificate",
+                "self-signed",
+                "ssl",
+                "tls",
+            )
+        )
+    return False
+
+
+def _curl_exe_path() -> Optional[str]:
+    if os.name != "nt":
+        return None
+    return shutil.which("curl.exe")
+
+
+def _curl_fetch_bytes(url: str, headers: Dict[str, str], timeout: int) -> bytes:
+    curl_exe = _curl_exe_path()
+    if not curl_exe:
+        raise urllib.error.URLError("curl.exe bulunamadi")
+
+    command = [
+        curl_exe,
+        "--ssl-no-revoke",
+        "--http1.1",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--location",
+        "--connect-timeout",
+        "15",
+        "--max-time",
+        str(timeout),
+    ]
+    for key, value in headers.items():
+        command.extend(["-H", f"{key}: {value}"])
+    command.append(url)
+
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        timeout=timeout + 20,
+    )
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise urllib.error.URLError(stderr or f"curl.exe cikis kodu: {proc.returncode}")
+    return proc.stdout
+
+
+def _curl_download_to_path(
+    url: str,
+    headers: Dict[str, str],
+    output_path: str,
+    timeout: int,
+) -> None:
+    curl_exe = _curl_exe_path()
+    if not curl_exe:
+        raise urllib.error.URLError("curl.exe bulunamadi")
+
+    command = [
+        curl_exe,
+        "--ssl-no-revoke",
+        "--http1.1",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--location",
+        "--connect-timeout",
+        "15",
+        "--max-time",
+        str(timeout),
+        "-o",
+        output_path,
+    ]
+    for key, value in headers.items():
+        command.extend(["-H", f"{key}: {value}"])
+    command.append(url)
+
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        timeout=timeout + 20,
+    )
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise urllib.error.URLError(stderr or f"curl.exe cikis kodu: {proc.returncode}")
+
+
+def _urlopen(request: urllib.request.Request, timeout: int):
+    last_error: Optional[Exception] = None
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except Exception as exc:
+        last_error = exc
+        if not _should_retry_with_certifi(exc):
+            raise
+
+    certifi_context = _build_ssl_context_with_certifi()
+    if certifi_context is None:
+        raise last_error
+    return urllib.request.urlopen(request, timeout=timeout, context=certifi_context)
+
+
+def _read_url_bytes(request: urllib.request.Request, timeout: int) -> bytes:
+    try:
+        with _urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.HTTPError:
+        raise
+    except Exception as exc:
+        if not _should_retry_with_curl(exc):
+            raise
+        return _curl_fetch_bytes(request.full_url, dict(request.header_items()), timeout)
+
+
+def _download_url_to_path(
+    request: urllib.request.Request,
+    output_path: str,
+    timeout: int,
+) -> None:
+    try:
+        with _urlopen(request, timeout=timeout) as response, open(output_path, "wb") as handle:
+            shutil.copyfileobj(response, handle)
+    except urllib.error.HTTPError:
+        raise
+    except Exception as exc:
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except Exception:
+                pass
+        if not _should_retry_with_curl(exc):
+            raise
+        _curl_download_to_path(
+            request.full_url,
+            dict(request.header_items()),
+            output_path,
+            timeout,
+        )
+
+
 def check_latest_release(owner: str, repo: str) -> Optional[Dict]:
     """Return the latest release JSON (or None on failure).
 
@@ -53,8 +224,7 @@ def check_latest_release(owner: str, repo: str) -> Optional[Dict]:
     headers = _get_github_headers()
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.load(r)
+        return json.loads(_read_url_bytes(req, timeout=10).decode("utf-8"))
     except Exception:
         return None
 
@@ -71,8 +241,7 @@ def get_latest_release_info(
     headers = _get_github_headers()
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            release_json = json.load(r)
+        release_json = json.loads(_read_url_bytes(req, timeout=10).decode("utf-8"))
     except urllib.error.HTTPError as e:
         return {
             "status": "error",
@@ -216,12 +385,7 @@ def download_asset(asset: Dict, dest_dir: str) -> Optional[str]:
     
     try:
         req = urllib.request.Request(url, headers=_get_github_headers())
-        with urllib.request.urlopen(req, timeout=120) as r, open(out_path, "wb") as f:
-            while True:
-                chunk = r.read(8192 * 4)  # 32KB chunks
-                if not chunk:
-                    break
-                f.write(chunk)
+        _download_url_to_path(req, out_path, timeout=120)
         return out_path
     except Exception as e:
         logger.error(f"Asset downloading failed for {url}: {e}", exc_info=True)
@@ -238,8 +402,7 @@ def download_asset_text(asset: Dict) -> Optional[str]:
     headers = _get_github_headers()
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.read().decode("utf-8-sig", errors="replace")
+        return _read_url_bytes(req, timeout=30).decode("utf-8-sig", errors="replace")
     except Exception:
         return None
 
@@ -360,8 +523,7 @@ def download_repo_zip(owner: str, repo: str, branch: str = "main", dest_dir: Opt
     headers = _get_github_headers()
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
-            shutil.copyfileobj(r, f)
+        _download_url_to_path(req, dest, timeout=60)
         return dest
     except Exception:
         try:
