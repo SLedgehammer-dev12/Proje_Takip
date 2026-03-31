@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v2.1.4"
+APP_VERSION = "v2.1.5"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,12 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v2.1.5": [
+        "PERFORMANS: Yazi on izleme akisi ana revizyon on izlemesinden ayrildi; hizli satir dolasiminda gereksiz ikinci PDF render ve BLOB okuma yuku azaltildi.",
+        "BELLEK: PDF render worker cache mantigi guclendirildi, belge imzasi bazli tekrar kullanim eklendi ve sicak yoldaki zorunlu GC temizligi kaldirildi.",
+        "ACILIS: Otomatik acilis yedegi artik erteleniyor; son 24 saatte ayni tur yedek varsa disk yukunu artirmadan mevcut koruma devam ediyor.",
+        "LOG: Log sekmesi diski her acilista bastan taramak yerine tembel ve artimli okuma yapacak sekilde hafifletildi.",
+    ],
     "v2.1.4": [
         "YAZI COZUMLEME: Revizyon satirinda hangi yazinin goruntulenecegi artik dolu alanlara ve duruma gore merkezi olarak cozuluyor; tutarsiz yazi_turu kayitlari uygulamayi kilitlemiyor.",
         "DOKUMAN ERISIMI: Yazi on izleme ve tam ekran acma akisi, tip kaymis giden yazilarda fallback ile dogru PDF'i bulacak sekilde dayanikli hale getirildi.",

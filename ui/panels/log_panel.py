@@ -72,11 +72,13 @@ class LogPanel(QWidget):
         super().__init__(parent)
         self.log_path = Path(log_path or get_resource_path("proje_takip.log"))
         self._entries: List[Dict[str, str]] = []
+        self._pending_live_entries: List[Dict[str, str]] = []
         self._max_entries = 5000
         self._handler: Optional[QtLogHandler] = None
         self._source_names = {"Tum kaynaklar"}
+        self._disk_loaded = False
+        self._last_disk_signature: Optional[tuple[int, int]] = None
         self.setup_ui()
-        self.refresh_from_disk()
         self.attach_live_logging()
 
     def setup_ui(self):
@@ -111,7 +113,7 @@ class LogPanel(QWidget):
         toolbar.addWidget(self.auto_scroll)
 
         self.refresh_btn = QPushButton("Yenile")
-        self.refresh_btn.clicked.connect(self.refresh_from_disk)
+        self.refresh_btn.clicked.connect(lambda: self.refresh_from_disk(force=True))
         toolbar.addWidget(self.refresh_btn)
 
         layout.addLayout(toolbar)
@@ -159,9 +161,17 @@ class LogPanel(QWidget):
         self.detach_live_logging()
         super().closeEvent(event)
 
-    def refresh_from_disk(self):
+    def ensure_loaded_from_disk(self):
+        if not self._disk_loaded:
+            self.refresh_from_disk(force=True)
+
+    def refresh_from_disk(self, force: bool = False):
+        if not force and not self._should_reload_from_disk():
+            return
         entries = self._load_entries_from_disk()
+        entries = self._merge_pending_live_entries(entries)
         self._entries = entries[-self._max_entries :]
+        self._disk_loaded = True
         self._rebuild_source_filter()
         self._apply_filters()
 
@@ -173,10 +183,55 @@ class LogPanel(QWidget):
 
     def _load_entries_from_disk(self) -> List[Dict[str, str]]:
         if not self.log_path.exists():
+            self._last_disk_signature = None
             return []
 
         text = self.log_path.read_text(encoding="utf-8-sig", errors="replace")
+        self._last_disk_signature = self._get_disk_signature()
         return self._parse_log_text(text)
+
+    def _get_disk_signature(self) -> Optional[tuple[int, int]]:
+        try:
+            stat = self.log_path.stat()
+            return (stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return None
+
+    def _should_reload_from_disk(self) -> bool:
+        if not self._disk_loaded:
+            return True
+        return self._get_disk_signature() != self._last_disk_signature
+
+    def _merge_pending_live_entries(
+        self, disk_entries: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        if not self._pending_live_entries:
+            return disk_entries
+
+        seen = {
+            (
+                entry.get("timestamp", ""),
+                entry.get("logger_name", ""),
+                entry.get("level", ""),
+                entry.get("message", ""),
+            )
+            for entry in disk_entries
+        }
+        merged = list(disk_entries)
+        for entry in self._pending_live_entries:
+            identity = (
+                entry.get("timestamp", ""),
+                entry.get("logger_name", ""),
+                entry.get("level", ""),
+                entry.get("message", ""),
+            )
+            if identity in seen:
+                continue
+            merged.append(entry)
+            seen.add(identity)
+
+        self._pending_live_entries = self._pending_live_entries[-200:]
+        return merged
 
     def _parse_log_text(self, text: str) -> List[Dict[str, str]]:
         entries: List[Dict[str, str]] = []
@@ -205,6 +260,9 @@ class LogPanel(QWidget):
         return entries
 
     def _append_live_entry(self, entry: Dict[str, str]):
+        self._pending_live_entries.append(entry)
+        if len(self._pending_live_entries) > 200:
+            self._pending_live_entries = self._pending_live_entries[-200:]
         self._entries.append(entry)
         if len(self._entries) > self._max_entries:
             self._entries = self._entries[-self._max_entries :]

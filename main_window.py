@@ -5,7 +5,7 @@ import logging
 import datetime
 
 # 'Tuple' tipi yerine ProjeModel ve RevizyonModel kullanÄ±lacak
-from typing import Optional, Dict, List
+from typing import Callable, Optional, Dict, List
 
 # Counter removed - not used directly in this module
 
@@ -116,6 +116,10 @@ class AnaPencere(QMainWindow):
         self._update_check_in_progress = False
         self._update_download_in_progress = False
         self._startup_update_check_scheduled = False
+        self._memory_probe_initialized = False
+        self._memory_usage_probe: Optional[Callable[[], Optional[float]]] = None
+        self._startup_backup_scheduled = False
+        self._scheduled_letter_preview_payload = None
 
         # Initialize authentication service (login iÃ§in gerekli, lazy yapÄ±lamaz)
         from services.auth_service import AuthService
@@ -169,9 +173,13 @@ class AnaPencere(QMainWindow):
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self._trigger_preview_update)
 
+        self.letter_preview_timer = QTimer(self)
+        self.letter_preview_timer.setSingleShot(True)
+        self.letter_preview_timer.timeout.connect(self._trigger_letter_preview_update)
+
         # Memory monitoring timer - interval uzatÄ±ldÄ± ve daha hafif yapÄ±ldÄ±
         self.mem_timer = QTimer(self)
-        self.mem_timer.setInterval(15000)  # Optimized: 5s â†’ 15s (daha az kaynak kullanÄ±mÄ±)
+        self.mem_timer.setInterval(60000)  # Dakikada bir: daha dusuk polling maliyeti
         self.mem_timer.timeout.connect(self._update_memory_label)
 
         # Placeholder label, created in toolbar setup
@@ -227,6 +235,11 @@ class AnaPencere(QMainWindow):
         """Ensure that cleanup is invoked when the QApplication is about to quit."""
         try:
             # Disconnect signals to prevent race conditions during shutdown
+            try:
+                self.preview_timer.stop()
+                self.letter_preview_timer.stop()
+            except Exception:
+                pass
             try:
                 self._update_check_complete.disconnect(self._on_update_check_complete)
             except Exception:
@@ -411,6 +424,11 @@ class AnaPencere(QMainWindow):
             except Exception:
                 pass
             try:
+                if hasattr(self, "letter_preview_timer"):
+                    self.letter_preview_timer.stop()
+            except Exception:
+                pass
+            try:
                 if hasattr(self, "otomatik_kayit_timer"):
                     self.otomatik_kayit_timer.stop()
             except Exception:
@@ -588,6 +606,11 @@ class AnaPencere(QMainWindow):
     def _invalidate_filter_cache_and_reload(self, keep_project_id: Optional[int] = None, keep_rev_id: Optional[int] = None):
         """Clear filter cache and re-load projects to ensure UI doesn't show stale results."""
         try:
+            try:
+                if self.preview_render_service:
+                    self.preview_render_service.clear_cache()
+            except Exception:
+                pass
             if getattr(self, "filter_manager", None):
                 try:
                     self.filter_manager.clear_cache()
@@ -711,8 +734,33 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"projeleri_yukle hata: {e}", exc_info=True)
 
     def _acilista_yedek_al(self):
-        """Uygulama aÃ§Ä±lÄ±ÅŸÄ±nda arka planda otomatik yedek al"""
+        """Uygulama acilisinda yedegi UI oturduktan sonra ve gerekliyse al."""
+        if self._startup_backup_scheduled:
+            return
+        self._startup_backup_scheduled = True
+
+        def _run_backup_if_needed():
+            try:
+                backup_service = self.db.backup_service
+                if backup_service.has_recent_backup(
+                    max_age_hours=24, description_prefix="Acilis"
+                ):
+                    self.logger.info(
+                        "Son 24 saatte acilis yedegi mevcut; yeni acilis yedegi atlandi."
+                    )
+                    return
+                self._start_startup_backup_worker()
+            except Exception as e:
+                self.logger.warning(f"Acilis yedegi planlanamadi: {e}")
+
+        QTimer.singleShot(12000, _run_backup_if_needed)
+
+    def _start_startup_backup_worker(self):
         import threading
+
+        existing_thread = getattr(self, "_backup_thread", None)
+        if existing_thread is not None and existing_thread.is_alive():
+            return
 
         db_path = self.current_db_file
         backup_service = self.db.backup_service
@@ -723,49 +771,71 @@ class AnaPencere(QMainWindow):
                 try:
                     yedek_dosya = backup_service.create_backup(src_conn, "Acilis")
                     if yedek_dosya:
-                        self.logger.info(f"AÃ§Ä±lÄ±ÅŸ yedeÄŸi alÄ±ndÄ±: {yedek_dosya}")
+                        self.logger.info(f"Acilis yedegi alindi: {yedek_dosya}")
                 finally:
                     src_conn.close()
             except Exception as e:
-                self.logger.warning(f"AÃ§Ä±lÄ±ÅŸ yedeÄŸi alÄ±namadÄ±: {e}")
+                self.logger.warning(f"Acilis yedegi alinamadi: {e}")
 
         self._backup_thread = threading.Thread(target=_backup_worker, daemon=True)
         self._backup_thread.start()
 
+    def _resolve_memory_usage_probe(self) -> Optional[Callable[[], Optional[float]]]:
+        if self._memory_probe_initialized:
+            return self._memory_usage_probe
+
+        self._memory_probe_initialized = True
+        probe: Optional[Callable[[], Optional[float]]] = None
+
+        try:
+            import psutil
+
+            process = psutil.Process()
+
+            def _psutil_probe(proc=process):
+                return proc.memory_info().rss / 1024 / 1024
+
+            probe = _psutil_probe
+        except Exception:
+            probe = None
+
+        if probe is None:
+            try:
+                import resource
+
+                def _resource_probe():
+                    memory_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                    if sys.platform == "darwin":
+                        return memory_kb / 1024 / 1024
+                    if sys.platform == "linux":
+                        return memory_kb / 1024
+                    return memory_kb / 1024 / 1024
+
+                probe = _resource_probe
+            except Exception:
+                probe = None
+
+        if probe is None:
+            try:
+                import tracemalloc
+
+                if tracemalloc.is_tracing():
+                    probe = lambda: tracemalloc.get_traced_memory()[0] / 1024 / 1024
+            except Exception:
+                probe = None
+
+        self._memory_usage_probe = probe
+        return self._memory_usage_probe
+
     def _update_memory_label(self):
-        """Update the memory usage labels - optimize edilmiÅŸ, UI thread'i bloklamaz"""
+        """Update the memory usage label using a cached probe."""
         text = "Bellek: n/a"
         try:
-            # Ã–nce tracemalloc'u dene (daha hafif)
-            import tracemalloc
-
-            if tracemalloc.is_tracing():
-                current, _peak = tracemalloc.get_traced_memory()
-                text = f"Bellek: {current/1024/1024:.1f} MB"
-            else:
-                # tracemalloc yoksa psutil'i dene
-                try:
-                    import psutil
-
-                    process = psutil.Process()
-                    memory_mb = process.memory_info().rss / 1024 / 1024
+            probe = self._resolve_memory_usage_probe()
+            if probe is not None:
+                memory_mb = probe()
+                if memory_mb is not None:
                     text = f"Bellek: {memory_mb:.1f} MB"
-                except ImportError:
-                    # psutil mevcut deÄŸil, basit alternatif kullan
-                    import resource
-
-                    try:
-                        memory_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-                        # Linux'ta kb, Windows/Mac'te bytes olabilir
-                        if sys.platform == "darwin":  # macOS
-                            memory_mb = memory_kb / 1024 / 1024
-                        elif sys.platform == "linux":
-                            memory_mb = memory_kb / 1024
-                        else:  # Windows
-                            memory_mb = memory_kb / 1024 / 1024
-                        text = f"Bellek: {memory_mb:.1f} MB"
-                    except Exception:
-                        text = "Bellek: n/a"
         except Exception:
             text = "Bellek: n/a"
 
@@ -1620,6 +1690,12 @@ class AnaPencere(QMainWindow):
         """Bridge method for RevisionPanel selection signal"""
         # Trigger existing logic
         self.revizyon_secilince_detay_guncelle()
+        self.letter_preview_timer.stop()
+        self._scheduled_letter_preview_payload = None
+        if rev:
+            self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
+        else:
+            self._set_letter_preview_message("Revizyona ait yazı ön izlemesi burada görünür.")
         self.preview_timer.start(250)
         try:
             self._update_action_states()
@@ -1650,6 +1726,82 @@ class AnaPencere(QMainWindow):
         if not rev or not self.document_service:
             return None
         return self.document_service.resolve_letter_payload(rev)
+
+    def _set_letter_preview_message(self, text: str):
+        if not hasattr(self, "yazi_onizleme_etiketi"):
+            return
+        self.yazi_onizleme_etiketi.clear()
+        self.yazi_onizleme_etiketi.setText(text)
+        self.yazi_ac_btn.setEnabled(False)
+        self._current_yazi_payload = None
+
+    def _queue_letter_preview_for_revision(
+        self, rev: Optional[RevizyonModel], delay_ms: int = 450
+    ):
+        if not hasattr(self, "yazi_onizleme_etiketi"):
+            return
+
+        self.letter_preview_timer.stop()
+        self._scheduled_letter_preview_payload = None
+
+        if not rev:
+            self._set_letter_preview_message("Revizyona ait yazı ön izlemesi burada görünür.")
+            return
+
+        letter_payload = self._build_letter_payload_for_revision(rev)
+        yazi_no = letter_payload.get("yazi_no") if letter_payload else None
+        if not letter_payload or not yazi_no:
+            self._set_letter_preview_message("Revizyonun yazısı yok.")
+            return
+
+        self._scheduled_letter_preview_payload = letter_payload
+        self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
+        if delay_ms > 0:
+            self.letter_preview_timer.start(delay_ms)
+
+    def _trigger_letter_preview_update(self):
+        try:
+            item = self._get_secili_revizyon_item()
+            current_rev = item.data(0, Qt.UserRole) if item else None
+            if not current_rev:
+                self._set_letter_preview_message(
+                    "Revizyona ait yazı ön izlemesi burada görünür."
+                )
+                return
+
+            letter_payload = self._scheduled_letter_preview_payload
+            if not letter_payload:
+                self._queue_letter_preview_for_revision(current_rev, delay_ms=0)
+                letter_payload = self._scheduled_letter_preview_payload
+            if not letter_payload:
+                return
+
+            yazi_no = letter_payload.get("yazi_no")
+            if not yazi_no:
+                self._set_letter_preview_message("Revizyonun yazısı yok.")
+                return
+
+            render_service = self.preview_render_service
+            if not render_service:
+                self._set_letter_preview_message("Yazı ön izlemesi yüklenemedi.")
+                return
+
+            load_result = render_service.prepare_letter_preview(letter_payload)
+            if load_result.status != "ready":
+                self._set_letter_preview_message(
+                    load_result.message or "Bu revizyona ait yazı dokümanı bulunamadı."
+                )
+                return
+
+            if hasattr(self, "_start_yazi_render") and self.isVisible():
+                self._start_yazi_render.emit(
+                    load_result.document_bytes, self.zoom_factor, yazi_no
+                )
+            else:
+                self._set_letter_preview_message("Yazı ön izlemesi yüklenemedi.")
+        except Exception as e:
+            self.logger.error(f"Yazi preview update error: {e}", exc_info=True)
+            self._set_letter_preview_message("Yazı ön izleme hatası")
 
     def _open_binary_document(
         self,
@@ -2237,6 +2389,15 @@ class AnaPencere(QMainWindow):
 
     def _clear_preview(self):
         """Ã–nizleme panelini temizle"""
+        try:
+            self.preview_timer.stop()
+        except Exception:
+            pass
+        try:
+            self.letter_preview_timer.stop()
+        except Exception:
+            pass
+        self._scheduled_letter_preview_payload = None
         if self.preview_state:
             self.preview_state.clear()
         else:
@@ -2245,10 +2406,9 @@ class AnaPencere(QMainWindow):
         self.goruntule_btn.setEnabled(False)
 
         if hasattr(self, "yazi_onizleme_etiketi"):
-            self.yazi_onizleme_etiketi.clear()
-            self.yazi_onizleme_etiketi.setText("Revizyona ait yazÄ± Ã¶n izlemesi burada gÃ¶rÃ¼nÃ¼r.")
-            self.yazi_ac_btn.setEnabled(False)
-            self._current_yazi_payload = None
+            self._set_letter_preview_message(
+                "Revizyona ait yazÄ± Ã¶n izlemesi burada gÃ¶rÃ¼nÃ¼r."
+            )
 
     def _refresh_current_project(self, keep_rev_id: Optional[int] = None):
         """Reload the revisions for the current project and reselect a revision if given.
@@ -2257,6 +2417,11 @@ class AnaPencere(QMainWindow):
         which can cause unwanted UI jumps when editing a single revision.
         """
         try:
+            try:
+                if self.preview_render_service:
+                    self.preview_render_service.clear_cache()
+            except Exception:
+                pass
             # Clear filter cache only, do not re-populate the project list
             try:
                 if getattr(self, 'filter_manager', None):
@@ -2428,6 +2593,14 @@ class AnaPencere(QMainWindow):
 
     def _on_revizyon_selection_changed(self):
         self.revizyon_secilince_detay_guncelle()
+        self.letter_preview_timer.stop()
+        self._scheduled_letter_preview_payload = None
+        item = self._get_secili_revizyon_item()
+        rev = item.data(0, Qt.UserRole) if item else None
+        if rev:
+            self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
+        else:
+            self._set_letter_preview_message("Revizyona ait yazı ön izlemesi burada görünür.")
         self.preview_timer.start(250)
         try:
             self._update_action_states()
@@ -2666,31 +2839,7 @@ class AnaPencere(QMainWindow):
                 self.goruntule_btn.setEnabled(False)
 
             self._start_pdf_render.emit(dokuman_verisi, self.zoom_factor, rev_id)
-
-            # --- START LETTER PREVIEW RENDER ---
-            letter_payload = self._build_letter_payload_for_revision(secili_revizyon)
-            yazi_no = letter_payload.get("yazi_no") if letter_payload else None
-
-            if hasattr(self, "yazi_onizleme_etiketi"):
-                self.yazi_ac_btn.setEnabled(False)
-                self._current_yazi_payload = None
-                self.yazi_onizleme_etiketi.clear()
-
-                if letter_payload and yazi_no:
-                    self.yazi_onizleme_etiketi.setText("YazÄ± Ã¶n izlemesi yÃ¼kleniyor...")
-                    yazi_dok = self.db.yazi_dokumani_getir(
-                        yazi_no,
-                        letter_payload.get("yazi_tarih"),
-                        letter_payload.get("yazi_turu"),
-                    )
-                    if yazi_dok and hasattr(self, "_start_yazi_render"):
-                        yazi_veri = yazi_dok[1]
-                        self._start_yazi_render.emit(yazi_veri, self.zoom_factor, yazi_no)
-                    else:
-                        self.yazi_onizleme_etiketi.setText("Bu revizyona ait yazÄ± dokÃ¼manÄ± bulunamadÄ±.")
-                else:
-                    self.yazi_onizleme_etiketi.setText("Revizyonun yazÄ±sÄ± yok.")
-            # --- END LETTER PREVIEW RENDER ---
+            self._queue_letter_preview_for_revision(secili_revizyon)
 
         except Exception as e:
             self.logger.error(f"Preview update error: {e}", exc_info=True)
@@ -2737,7 +2886,7 @@ class AnaPencere(QMainWindow):
         pixmap = QPixmap.fromImage(image)
         item = self._get_secili_revizyon_item()
         current_rev = item.data(0, Qt.UserRole) if item else None
-        letter_payload = self._build_letter_payload_for_revision(current_rev)
+        letter_payload = self._scheduled_letter_preview_payload or self._build_letter_payload_for_revision(current_rev)
         if not letter_payload or letter_payload.get("yazi_no") != yazi_no:
             return
 
@@ -2746,6 +2895,7 @@ class AnaPencere(QMainWindow):
             self.yazi_onizleme_etiketi.setPixmap(pixmap)
             self.yazi_ac_btn.setEnabled(bool(letter_payload))
             self._current_yazi_payload = letter_payload
+            self._scheduled_letter_preview_payload = letter_payload
         else:
             self.onizleme_etiketi.setPixmap(pixmap)
             self.goruntule_btn.setEnabled(bool(letter_payload))
@@ -2784,7 +2934,7 @@ class AnaPencere(QMainWindow):
         elif index == 2:
             self.guncelle_gosterge_panelini()
         elif index == 3 and hasattr(self, "log_panel"):
-            self.log_panel.refresh_from_disk()
+            self.log_panel.ensure_loaded_from_disk()
 
     def _arama_kutusu_degisti(self):
         try:
@@ -3112,6 +3262,7 @@ class AnaPencere(QMainWindow):
 
         # --- YENÄ° Ã‡Ã–KME DÃœZELTMESÄ°: ZamanlayÄ±cÄ±yÄ± diyalog aÃ§Ä±lmadan durdur ---
         self.preview_timer.stop()
+        self.letter_preview_timer.stop()
         dialog = OnayRedDialog(self, islem_turu, mevcut_yazilar)
 
         if dialog.exec():
@@ -3246,6 +3397,7 @@ class AnaPencere(QMainWindow):
 
         # --- YENÄ° Ã‡Ã–KME DÃœZELTMESÄ°: ZamanlayÄ±cÄ±yÄ± durdur ---
         self.preview_timer.stop()
+        self.letter_preview_timer.stop()
         dialog = DurumDegistirDialog(self, mevcut_durum, mevcut_kod)
 
         if dialog.exec():
@@ -3259,6 +3411,7 @@ class AnaPencere(QMainWindow):
 
             # --- YENÄ° Ã‡Ã–KME DÃœZELTMESÄ°: ZamanlayÄ±cÄ±yÄ± durdur ---
             self.preview_timer.stop()
+            self.letter_preview_timer.stop()
             yanit = QMessageBox.warning(
                 self,
                 "Onay Gerekli",
@@ -4012,6 +4165,7 @@ class AnaPencere(QMainWindow):
             # Dialog aÃ§Ä±lmadan Ã¶nce timer'Ä± durdur
             if hasattr(self, "preview_timer"):
                 self.preview_timer.stop()
+                self.letter_preview_timer.stop()
 
             # Kategorileri hazÄ±rla
             # ProjeDialog (id, "Tam/Yol") formatÄ±nda liste bekliyor
@@ -4222,6 +4376,7 @@ class AnaPencere(QMainWindow):
             # Dialog aÃ§Ä±lmadan Ã¶nce timer'Ä± durdur
             if hasattr(self, "preview_timer"):
                 self.preview_timer.stop()
+                self.letter_preview_timer.stop()
 
             # Projeyi bul
             proje = self.db.proje_bul_id_ile(self.secili_proje_id)
@@ -4382,6 +4537,7 @@ class AnaPencere(QMainWindow):
             # Dialog aÃ§Ä±lmadan Ã¶nce timer'Ä± durdur
             if hasattr(self, "preview_timer"):
                 self.preview_timer.stop()
+                self.letter_preview_timer.stop()
 
             # Projeyi bul
             proje = self.db.proje_bul_id_ile(self.secili_proje_id)

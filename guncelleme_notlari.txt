@@ -1,6 +1,17 @@
 PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
 
+--- Sürüm: v2.1.5 ---
+  * PERFORMANS: Yazi on izleme akisi ana revizyon on izlemesinden ayrildi; hizli satir dolasiminda gereksiz ikinci PDF render ve BLOB okuma yuku azaltildi.
+  * BELLEK: PDF render worker cache mantigi guclendirildi, belge imzasi bazli tekrar kullanim eklendi ve sicak yoldaki zorunlu GC temizligi kaldirildi.
+  * ACILIS: Otomatik acilis yedegi artik erteleniyor; son 24 saatte ayni tur yedek varsa disk yukunu artirmadan mevcut koruma devam ediyor.
+  * LOG: Log sekmesi diski her acilista bastan taramak yerine tembel ve artimli okuma yapacak sekilde hafifletildi.
+
+--- Sürüm: v2.1.4 ---
+  * YAZI COZUMLEME: Revizyon satirinda hangi yazinin goruntulenecegi artik dolu alanlara ve duruma gore merkezi olarak cozuluyor; tutarsiz yazi_turu kayitlari uygulamayi kilitlemiyor.
+  * DOKUMAN ERISIMI: Yazi on izleme ve tam ekran acma akisi, tip kaymis giden yazilarda fallback ile dogru PDF'i bulacak sekilde dayanikli hale getirildi.
+  * IKON: Calisma anindaki pencere ve gorev cubugu ikonu, exe ile ayni BOTAŞ ikon kaynagindan yuklenecek sekilde guclendirildi.
+
 --- Sürüm: v2.1.3 ---
   * GUNCELLEME: Baslangicta otomatik guncelleme kontrolu daha gorunur hale getirildi; yeni surum bulundugunda artik diyalog aciliyor.
   * TEMALAR: TOK tema sistemi 5 varyanta genisletildi (Kurumsal Acik, Gece Mavisi, Gundogumu, Cam Yesili, Celik Gri).

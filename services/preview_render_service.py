@@ -5,7 +5,7 @@ This keeps preview preparation logic out of the main window while leaving
 render worker orchestration in the UI layer.
 """
 
-import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Optional
 
@@ -23,19 +23,35 @@ class PreviewLoadResult:
 class PreviewRenderService:
     """Manage cached revision documents and validate them before rendering."""
 
-    def __init__(self, db, max_cache_size: int = 5):
+    def __init__(self, db, max_cache_size: int = 5, max_letter_cache_size: int = 8):
         self.db = db
         self.max_cache_size = max_cache_size
+        self.max_letter_cache_size = max_letter_cache_size
         self.logger = get_class_logger(self)
-        self._document_cache: dict[int, bytes] = {}
+        self._document_cache: OrderedDict[int, bytes] = OrderedDict()
+        self._letter_document_cache: OrderedDict[tuple[str, str, str], bytes] = (
+            OrderedDict()
+        )
 
     def clear_cache(self):
         self._document_cache.clear()
+        self._letter_document_cache.clear()
 
     def invalidate_revision(self, revision_id: Optional[int]):
         if revision_id is None:
             return
         self._document_cache.pop(revision_id, None)
+
+    def invalidate_letter(
+        self,
+        yazi_no: Optional[str],
+        yazi_tarih: Optional[str],
+        yazi_turu: Optional[str],
+    ):
+        if not yazi_no or not yazi_turu:
+            return
+        cache_key = self._normalize_letter_cache_key(yazi_no, yazi_tarih, yazi_turu)
+        self._letter_document_cache.pop(cache_key, None)
 
     def prepare_revision_preview(
         self, revision: Optional[RevizyonModel]
@@ -66,11 +82,67 @@ class PreviewRenderService:
                 )
             self._cache_document(rev_id, document_bytes)
         else:
+            self._touch_document_cache(rev_id)
             validation_message = self._validate_document_bytes(rev_id, document_bytes)
             if validation_message is not None:
                 self.invalidate_revision(rev_id)
                 return PreviewLoadResult(
                     status="invalid_document",
+                    message=validation_message,
+                )
+
+        return PreviewLoadResult(status="ready", document_bytes=document_bytes)
+
+    def prepare_letter_preview(self, letter_payload: Optional[dict]) -> PreviewLoadResult:
+        if not letter_payload or letter_payload.get("kind") != "letter":
+            return PreviewLoadResult(status="missing_letter_payload")
+
+        yazi_no = (letter_payload.get("yazi_no") or "").strip()
+        yazi_turu = (
+            letter_payload.get("lookup_yazi_turu")
+            or letter_payload.get("yazi_turu")
+            or ""
+        ).strip()
+        yazi_tarih = letter_payload.get("yazi_tarih")
+        if not yazi_no or not yazi_turu:
+            return PreviewLoadResult(status="missing_letter_identity")
+
+        cache_key = self._normalize_letter_cache_key(yazi_no, yazi_tarih, yazi_turu)
+        document_bytes = self._letter_document_cache.get(cache_key)
+        if document_bytes is None:
+            document_tuple = self.db.yazi_dokumani_getir(yazi_no, yazi_tarih, yazi_turu)
+            if not document_tuple:
+                self.logger.debug(
+                    "Letter preview prepare: no document row for yazi_no=%s type=%s",
+                    yazi_no,
+                    yazi_turu,
+                )
+                return PreviewLoadResult(
+                    status="missing_letter_document",
+                    message="Bu revizyona ait yazı dokümanı bulunamadı.",
+                )
+
+            document_bytes = document_tuple[1]
+            validation_message = self._validate_document_bytes(
+                f"letter:{yazi_no}:{yazi_turu}",
+                document_bytes,
+            )
+            if validation_message is not None:
+                return PreviewLoadResult(
+                    status="invalid_letter_document",
+                    message=validation_message,
+                )
+            self._cache_letter_document(cache_key, document_bytes)
+        else:
+            self._touch_letter_cache(cache_key)
+            validation_message = self._validate_document_bytes(
+                f"letter:{yazi_no}:{yazi_turu}",
+                document_bytes,
+            )
+            if validation_message is not None:
+                self.invalidate_letter(yazi_no, yazi_tarih, yazi_turu)
+                return PreviewLoadResult(
+                    status="invalid_letter_document",
                     message=validation_message,
                 )
 
@@ -84,6 +156,34 @@ class PreviewRenderService:
             except (StopIteration, KeyError, RuntimeError):
                 pass
         self._document_cache[revision_id] = document_bytes
+
+    def _touch_document_cache(self, revision_id: int):
+        try:
+            self._document_cache.move_to_end(revision_id)
+        except KeyError:
+            return
+
+    def _cache_letter_document(
+        self, cache_key: tuple[str, str, str], document_bytes: bytes
+    ):
+        if len(self._letter_document_cache) >= self.max_letter_cache_size:
+            try:
+                first_key = next(iter(self._letter_document_cache))
+                del self._letter_document_cache[first_key]
+            except (StopIteration, KeyError, RuntimeError):
+                pass
+        self._letter_document_cache[cache_key] = document_bytes
+
+    def _touch_letter_cache(self, cache_key: tuple[str, str, str]):
+        try:
+            self._letter_document_cache.move_to_end(cache_key)
+        except KeyError:
+            return
+
+    def _normalize_letter_cache_key(
+        self, yazi_no: str, yazi_tarih: Optional[str], yazi_turu: str
+    ) -> tuple[str, str, str]:
+        return (yazi_no.strip(), (yazi_tarih or "").strip(), yazi_turu.strip())
 
     def _validate_document_bytes(
         self, revision_id: int, document_bytes: Optional[bytes]

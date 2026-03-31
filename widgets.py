@@ -1,12 +1,13 @@
 # widgets.py
 
+from collections import OrderedDict
+
 import fitz  # PyMuPDF
 from PySide6.QtWidgets import QScrollArea, QTreeWidget, QTreeWidgetItem, QWidget, QVBoxLayout
 
 # Qt, QObject, Signal, Slot, QThread importları yukarı taşındı ve düzenlendi
 from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtGui import QImage, QPainter, QPixmap, QFont, QColor
-import gc
 import logging
 import os
 
@@ -128,8 +129,12 @@ class PdfRenderWorker(QObject):
         super().__init__()
         # Önbellekleme mekanizması - aynı revizyonun tekrar render edilmesini önle
         self._last_rendered_id = None
+        self._last_rendered_zoom = None
+        self._last_rendered_signature = None
         self._last_rendered_image = None
         self._max_cache_size = 5 * 1024 * 1024  # 5 MB max cache
+        self._letter_render_cache = OrderedDict()
+        self._max_letter_cache_entries = 6
 
     # --- ÇÖKME DÜZELTMESİ (ADIM 6): Slot'a rev_id (int) eklendi ---
     @Slot(bytes, float, int)
@@ -138,10 +143,13 @@ class PdfRenderWorker(QObject):
 
         logger = logging.getLogger(__name__)
         logger.debug(f"PdfRenderWorker.render_page called for rev_id={rev_id}, zoom={zoom_factor}, dokuman_size={len(dokuman_verisi) if dokuman_verisi else 0}")
+        document_signature = hash(dokuman_verisi) if dokuman_verisi else None
 
         # Aynı revizyon için önceki render varsa ve zoom aynıysa, cache'den döndür
         if (
             self._last_rendered_id == rev_id
+            and self._last_rendered_zoom == zoom_factor
+            and self._last_rendered_signature == document_signature
             and self._last_rendered_image is not None
             and not self._last_rendered_image.isNull()
         ):
@@ -157,14 +165,6 @@ class PdfRenderWorker(QObject):
         image = None
 
         try:
-            # İşlem öncesi bellek temizliği - sadece gerektiğinde
-            if (
-                self._last_rendered_image
-                and self._last_rendered_image.sizeInBytes() > 2 * 1024 * 1024
-            ):
-                self._last_rendered_image = None
-                gc.collect()
-
             # PDF belgesini aç ve kontrol et
             pdf_doc = fitz.open(stream=dokuman_verisi, filetype="pdf")
             if not pdf_doc or pdf_doc.page_count == 0:
@@ -222,6 +222,8 @@ class PdfRenderWorker(QObject):
             # Cache'e kaydet
             if not image.isNull():
                 self._last_rendered_id = rev_id
+                self._last_rendered_zoom = zoom_factor
+                self._last_rendered_signature = document_signature
                 self._last_rendered_image = image
                 logger.debug(f"PdfRenderWorker: emitting image_ready for rev_id={rev_id}, size={image.width()}x{image.height()} bytes={image.sizeInBytes()}")
                 self.image_ready.emit(image, rev_id)
@@ -252,14 +254,29 @@ class PdfRenderWorker(QObject):
     def clear_cache(self):
         """Cache'i temizle"""
         self._last_rendered_id = None
+        self._last_rendered_zoom = None
+        self._last_rendered_signature = None
         self._last_rendered_image = None
-        gc.collect()
+        self._letter_render_cache.clear()
 
     @Slot(bytes, float, str)
     def render_yazi(self, dokuman_verisi, zoom_factor, yazi_no):
         """Render a yazi (incoming letter) document and emit image that contains the yazi number instead of rev id."""
         logger = logging.getLogger(__name__)
         logger.debug(f"PdfRenderWorker.render_yazi called for yazi_no={yazi_no}, zoom={zoom_factor}, dokuman_size={len(dokuman_verisi) if dokuman_verisi else 0}")
+
+        pdf_doc = None
+        pix = None
+        cache_key = (yazi_no, round(float(zoom_factor), 2), hash(dokuman_verisi) if dokuman_verisi else None)
+        cached_image = self._letter_render_cache.get(cache_key)
+        if cached_image is not None and not cached_image.isNull():
+            try:
+                self._letter_render_cache.move_to_end(cache_key)
+            except Exception:
+                pass
+            logger.debug("PdfRenderWorker: returning cached yazi image for yazi_no=%s", yazi_no)
+            self.yazi_image_ready.emit(cached_image, yazi_no)
+            return
 
         try:
             if not dokuman_verisi:
@@ -297,6 +314,7 @@ class PdfRenderWorker(QObject):
                 image = image.scaled(new_w, new_h, Qt.KeepAspectRatio, transform)
 
             logger.debug(f"PdfRenderWorker: emitting yazi_image_ready for yazi_no={yazi_no}, size={image.width()}x{image.height()} bytes={image.sizeInBytes()}")
+            self._cache_letter_render(cache_key, image)
             self.yazi_image_ready.emit(image, yazi_no)
         except Exception as e:
             logger.error(f"Yazi render error: {e}", exc_info=True)
@@ -315,6 +333,18 @@ class PdfRenderWorker(QObject):
                         pass
             except Exception:
                 pass
+
+    def _cache_letter_render(self, cache_key, image: QImage):
+        self._letter_render_cache[cache_key] = image
+        try:
+            self._letter_render_cache.move_to_end(cache_key)
+        except Exception:
+            pass
+        while len(self._letter_render_cache) > self._max_letter_cache_entries:
+            try:
+                self._letter_render_cache.popitem(last=False)
+            except Exception:
+                break
 
 
 # =============================================================================

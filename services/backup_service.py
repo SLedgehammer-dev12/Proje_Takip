@@ -129,6 +129,32 @@ class BackupService:
         except Exception as e:
             self.logger.warning(f"Eski yedek temizliği hatası: {e}")
 
+    def has_recent_backup(
+        self, max_age_hours: float = 24, description_prefix: Optional[str] = None
+    ) -> bool:
+        """Return True if a matching backup exists within the given age window."""
+        try:
+            backup_path = Path(self.backup_folder)
+            if not backup_path.exists():
+                return False
+
+            cutoff_ts = time.time() - (max_age_hours * 3600)
+            pattern = (
+                f"yedek_{description_prefix}_*.db"
+                if description_prefix
+                else "yedek_*.db"
+            )
+
+            for backup in backup_path.glob(pattern):
+                try:
+                    if backup.stat().st_mtime >= cutoff_ts:
+                        return True
+                except FileNotFoundError:
+                    continue
+        except Exception as e:
+            self.logger.warning(f"Güncel yedek kontrolü yapılamadı: {e}")
+        return False
+
     def restore_backup(self, backup_file: str, connection_pool: dict = None) -> bool:
         """Yedekten geri yükle"""
         try:
