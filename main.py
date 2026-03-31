@@ -38,8 +38,9 @@ import logging
 import ctypes
 
 # Modüllerimizden içe aktarma
-from app_paths import get_internal_path, get_resource_path
-from config import APP_NAME, APP_VERSION, CHANGELOG
+from app_icon import load_application_icon
+from app_paths import get_resource_path
+from config import APP_ICON_FILE, APP_NAME, APP_USER_MODEL_ID, APP_VERSION, CHANGELOG
 
 # =============================================================================
 # WINDOWS TASKBAR İKON DESTEĞİ
@@ -48,14 +49,13 @@ if os.name == 'nt':
     try:
         # AppUserModelID belirlemezsek Windows görev çubuğunda jenerik ikon gösterir.
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "com.botas.projetakipsistemi"
+            APP_USER_MODEL_ID
         )
     except Exception:
         pass
 
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QIcon
 from PySide6 import QtCore
 
 from database import ProjeTakipDB
@@ -106,11 +106,14 @@ def main():
 
     try:
         app = QApplication(sys.argv)
-        
-        # Load and set the application icon using internal path
-        icon_path = get_internal_path("app_icon.ico")
-        if os.path.exists(icon_path):
-            app.setWindowIcon(QIcon(icon_path))
+        app_icon = load_application_icon(icon_name=APP_ICON_FILE)
+        if not app_icon.isNull():
+            app.setWindowIcon(app_icon)
+        if hasattr(app, "setDesktopFileName"):
+            try:
+                app.setDesktopFileName(APP_USER_MODEL_ID)
+            except Exception:
+                pass
         app.setApplicationDisplayName(APP_NAME)
 
         # Apply theme + log styling if available

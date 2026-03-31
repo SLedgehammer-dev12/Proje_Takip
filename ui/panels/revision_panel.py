@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from typing import List
+from letter_resolution import has_revision_letter, resolve_revision_letter_candidate
 from models import RevizyonModel, Durum
 
 
@@ -108,25 +109,20 @@ class RevisionPanel(QWidget):
         try:
             tree.clear()
             for rev in revisions:
+                display_letter = resolve_revision_letter_candidate(rev)
                 yazi_no = "-"
                 yazi_tarih = "-"
-
-                if rev.yazi_turu == "gelen":
-                    yazi_no = rev.gelen_yazi_no or "-"
-                    yazi_tarih = rev.gelen_yazi_tarih or "-"
-                elif rev.yazi_turu == "giden":
-                    if rev.onay_yazi_no:
-                        yazi_no = rev.onay_yazi_no
-                        yazi_tarih = rev.onay_yazi_tarih or "-"
-                    elif rev.red_yazi_no:
-                        yazi_no = rev.red_yazi_no
-                        yazi_tarih = rev.red_yazi_tarih or "-"
+                display_broad_type = None
+                if display_letter:
+                    yazi_no = display_letter.yazi_no or "-"
+                    yazi_tarih = display_letter.yazi_tarih or "-"
+                    display_broad_type = display_letter.broad_type
 
                 yazi_turu_display = {
                     "gelen": "📥 Gelen Yazı",
                     "giden": "📤 Giden Yazı",
-                    "yok": "-"
-                }.get(rev.yazi_turu, "-")
+                    "yok": "-",
+                }.get(display_broad_type, "-")
 
                 item = QTreeWidgetItem(tree)
                 item.setText(0, rev.revizyon_kodu)
@@ -167,7 +163,7 @@ class RevisionPanel(QWidget):
                         item.setBackground(col, takip_fill)
 
                 item.setData(0, Qt.UserRole, rev)
-                item.setData(4, Qt.UserRole, rev.yazi_turu)
+                item.setData(4, Qt.UserRole, display_letter.logical_type if display_letter else None)
 
             if not getattr(self, "_columns_sized_once", False):
                 for i in range(10):
@@ -181,9 +177,7 @@ class RevisionPanel(QWidget):
         if items:
             rev = items[0].data(0, Qt.UserRole)
             self.revision_selected.emit(rev)
-            # Enable/disable "Yazıyı Görüntüle" based on whether yazi_turu has a letter
-            has_letter = bool(rev and getattr(rev, "yazi_turu", None) in ("gelen", "giden"))
-            self.view_letter_btn.setEnabled(has_letter)
+            self.view_letter_btn.setEnabled(bool(rev and has_revision_letter(rev)))
         else:
             self.revision_selected.emit(None)
             self.view_letter_btn.setEnabled(False)

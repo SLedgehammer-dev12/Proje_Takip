@@ -388,6 +388,18 @@ class ProjeTakipDB:
             return ""
         return str(yazi_tarih).strip()
 
+    def _infer_revision_yazi_turu(
+        self,
+        gelen_yazi_no: Optional[str],
+        onay_yazi_no: Optional[str],
+        red_yazi_no: Optional[str],
+    ) -> str:
+        if (gelen_yazi_no or "").strip():
+            return "gelen"
+        if (onay_yazi_no or "").strip() or (red_yazi_no or "").strip():
+            return "giden"
+        return "yok"
+
     def _expand_yazi_dokumani_turleri(self, yazi_turu: Optional[str]) -> List[str]:
         if not yazi_turu:
             return []
@@ -861,49 +873,49 @@ class ProjeTakipDB:
                              AND y.yazi_turu = 'gelen'
                              AND (y.yazi_tarih = COALESCE(r.gelen_yazi_tarih, '') OR y.yazi_tarih = '')
                        ) THEN 'Yüklü' ELSE 'Eksik' END
-                   WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL THEN
-                       CASE WHEN EXISTS (
-                           SELECT 1
-                           FROM yazi_dokumanlari y
-                           WHERE y.yazi_no = r.onay_yazi_no
-                             AND y.yazi_turu IN ('onay', 'notlu_onay')
-                             AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
-                       ) THEN 'Yüklü' ELSE 'Eksik' END
-                   WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL THEN
-                       CASE WHEN EXISTS (
-                           SELECT 1
-                           FROM yazi_dokumanlari y
-                           WHERE y.yazi_no = r.red_yazi_no
-                             AND y.yazi_turu = 'red'
-                             AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
-                       ) THEN 'Yüklü' ELSE 'Eksik' END
+                    WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL THEN
+                        CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM yazi_dokumanlari y
+                            WHERE y.yazi_no = r.onay_yazi_no
+                              AND y.yazi_turu IN ('onay', 'notlu_onay', 'red', 'giden')
+                              AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
+                        ) THEN 'Yüklü' ELSE 'Eksik' END
+                    WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL THEN
+                        CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM yazi_dokumanlari y
+                            WHERE y.yazi_no = r.red_yazi_no
+                              AND y.yazi_turu IN ('red', 'onay', 'notlu_onay', 'giden')
+                              AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
+                        ) THEN 'Yüklü' ELSE 'Eksik' END
                    ELSE '-'
                END
         """
         suspicious_case = (
             """
                CASE
-                   WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL THEN
-                       CASE WHEN EXISTS (
-                           SELECT 1
-                           FROM dokumanlar d
-                           JOIN yazi_dokumanlari y
-                             ON y.yazi_no = r.onay_yazi_no
-                            AND y.yazi_turu IN ('onay', 'notlu_onay')
-                            AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
-                           WHERE d.revizyon_id = r.id
-                             AND d.dosya_verisi = y.dosya_verisi
-                       ) THEN 1 ELSE 0 END
-                   WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL THEN
-                       CASE WHEN EXISTS (
-                           SELECT 1
-                           FROM dokumanlar d
-                           JOIN yazi_dokumanlari y
-                             ON y.yazi_no = r.red_yazi_no
-                            AND y.yazi_turu = 'red'
-                            AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
-                           WHERE d.revizyon_id = r.id
-                             AND d.dosya_verisi = y.dosya_verisi
+                    WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL THEN
+                        CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM dokumanlar d
+                            JOIN yazi_dokumanlari y
+                              ON y.yazi_no = r.onay_yazi_no
+                             AND y.yazi_turu IN ('onay', 'notlu_onay', 'red', 'giden')
+                             AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
+                            WHERE d.revizyon_id = r.id
+                              AND d.dosya_verisi = y.dosya_verisi
+                        ) THEN 1 ELSE 0 END
+                    WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL THEN
+                        CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM dokumanlar d
+                            JOIN yazi_dokumanlari y
+                              ON y.yazi_no = r.red_yazi_no
+                             AND y.yazi_turu IN ('red', 'onay', 'notlu_onay', 'giden')
+                             AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
+                            WHERE d.revizyon_id = r.id
+                              AND d.dosya_verisi = y.dosya_verisi
                        ) THEN 1 ELSE 0 END
                    ELSE 0
                END
@@ -1230,47 +1242,47 @@ class ProjeTakipDB:
                                  AND y.yazi_turu = 'gelen'
                                  AND (y.yazi_tarih = COALESCE(r.gelen_yazi_tarih, '') OR y.yazi_tarih = '')
                            ) THEN 'Yüklü' ELSE 'Eksik' END
-                       WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL THEN
-                           CASE WHEN EXISTS (
-                               SELECT 1
-                               FROM yazi_dokumanlari y
-                               WHERE y.yazi_no = r.onay_yazi_no
-                                 AND y.yazi_turu IN ('onay', 'notlu_onay')
-                                 AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
-                           ) THEN 'Yüklü' ELSE 'Eksik' END
-                       WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL THEN
-                           CASE WHEN EXISTS (
-                               SELECT 1
-                               FROM yazi_dokumanlari y
-                               WHERE y.yazi_no = r.red_yazi_no
-                                 AND y.yazi_turu = 'red'
-                                 AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
-                           ) THEN 'Yüklü' ELSE 'Eksik' END
+                        WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL THEN
+                            CASE WHEN EXISTS (
+                                SELECT 1
+                                FROM yazi_dokumanlari y
+                                WHERE y.yazi_no = r.onay_yazi_no
+                                  AND y.yazi_turu IN ('onay', 'notlu_onay', 'red', 'giden')
+                                  AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
+                            ) THEN 'Yüklü' ELSE 'Eksik' END
+                        WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL THEN
+                            CASE WHEN EXISTS (
+                                SELECT 1
+                                FROM yazi_dokumanlari y
+                                WHERE y.yazi_no = r.red_yazi_no
+                                  AND y.yazi_turu IN ('red', 'onay', 'notlu_onay', 'giden')
+                                  AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
+                            ) THEN 'Yüklü' ELSE 'Eksik' END
                        ELSE '-'
                    END as yazi_dokuman_durumu,
                    CASE
-                       WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL
-                            AND EXISTS (
-                                SELECT 1
-                                FROM dokumanlar d
-                                JOIN yazi_dokumanlari y
-                                  ON y.yazi_no = r.onay_yazi_no
-                                 AND y.yazi_turu IN ('onay', 'notlu_onay')
-                                 AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
-                                WHERE d.revizyon_id = r.id
-                                  AND d.dosya_verisi = y.dosya_verisi
-                            )
-                       THEN 1
-                       WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL
-                            AND EXISTS (
-                                SELECT 1
-                                FROM dokumanlar d
-                                JOIN yazi_dokumanlari y
-                                  ON y.yazi_no = r.red_yazi_no
-                                 AND y.yazi_turu = 'red'
-                                 AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
-                                WHERE d.revizyon_id = r.id
-                                  AND d.dosya_verisi = y.dosya_verisi
+                        WHEN NULLIF(r.onay_yazi_no, '') IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1
+                                 FROM dokumanlar d
+                                 JOIN yazi_dokumanlari y
+                                   ON y.yazi_no = r.onay_yazi_no
+                                  AND y.yazi_turu IN ('onay', 'notlu_onay', 'red', 'giden')
+                                  AND (y.yazi_tarih = COALESCE(r.onay_yazi_tarih, '') OR y.yazi_tarih = '')
+                                 WHERE d.revizyon_id = r.id
+                                   AND d.dosya_verisi = y.dosya_verisi
+                             )
+                        THEN 1
+                        WHEN NULLIF(r.red_yazi_no, '') IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1
+                                 FROM dokumanlar d
+                                 JOIN yazi_dokumanlari y
+                                   ON y.yazi_no = r.red_yazi_no
+                                  AND y.yazi_turu IN ('red', 'onay', 'notlu_onay', 'giden')
+                                  AND (y.yazi_tarih = COALESCE(r.red_yazi_tarih, '') OR y.yazi_tarih = '')
+                                 WHERE d.revizyon_id = r.id
+                                   AND d.dosya_verisi = y.dosya_verisi
                             )
                        THEN 1
                        ELSE 0
@@ -1307,14 +1319,27 @@ class ProjeTakipDB:
         """
         try:
             with self.transaction():
+                mevcut_satir = self.cursor.execute(
+                    """
+                    SELECT gelen_yazi_no, onay_yazi_no, red_yazi_no
+                    FROM revizyonlar
+                    WHERE id = ?
+                    """,
+                    (revizyon_id,),
+                ).fetchone()
+                if not mevcut_satir:
+                    return False
+
+                normalized_yazi_turu = self._infer_revision_yazi_turu(*mevcut_satir)
+
                 # Only update durum and revizyon_kodu; keep any yazı numbers intact
                 self.cursor.execute(
                     """
                     UPDATE revizyonlar 
-                    SET durum = ?, revizyon_kodu = ?
+                    SET durum = ?, revizyon_kodu = ?, yazi_turu = ?
                     WHERE id = ?
                     """,
-                    (yeni_durum, yeni_kod, revizyon_id),
+                    (yeni_durum, yeni_kod, normalized_yazi_turu, revizyon_id),
                 )
                 return self.cursor.rowcount > 0
         except Exception:

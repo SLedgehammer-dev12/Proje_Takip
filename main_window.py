@@ -1638,7 +1638,10 @@ class AnaPencere(QMainWindow):
         rev = item.data(0, Qt.UserRole) if item else None
         if not self.document_service:
             return None
-        return self.document_service.build_preview_letter_payload(rev, yazi_no)
+        return self.document_service.resolve_letter_payload(
+            rev,
+            preferred_yazi_no=yazi_no,
+        )
 
     def _build_letter_payload_for_revision(
         self, rev: Optional[RevizyonModel]
@@ -1646,18 +1649,7 @@ class AnaPencere(QMainWindow):
         """Resolve the exact incoming/outgoing letter payload for a revision."""
         if not rev or not self.document_service:
             return None
-
-        yazi_turu = getattr(rev, "yazi_turu", None)
-        if yazi_turu == "giden":
-            if getattr(rev, "onay_yazi_no", None):
-                yazi_turu = "onay"
-            elif getattr(rev, "red_yazi_no", None):
-                yazi_turu = "red"
-
-        if not yazi_turu or yazi_turu == "yok":
-            return None
-
-        return self.document_service.build_letter_payload_from_revision(rev, yazi_turu)
+        return self.document_service.resolve_letter_payload(rev)
 
     def _open_binary_document(
         self,
@@ -1807,6 +1799,7 @@ class AnaPencere(QMainWindow):
         """Bridge method for PreviewPanel view button."""
         if isinstance(payload, RevizyonModel):
             self._open_revision_document(payload)
+            return
         if isinstance(payload, dict) and payload.get("kind") == "letter":
             self._open_letter_document(payload)
             return

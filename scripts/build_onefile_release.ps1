@@ -135,6 +135,7 @@ $pyInstallerArgs = @(
     "--distpath", $distRoot,
     "--workpath", (Join-Path $buildRoot ("pyinstaller-onefile-{0}" -f ($Version -replace '[^A-Za-z0-9._-]', '_'))),
     "--version-file", $versionInfoPath,
+    "--add-data", (New-PyInstallerSourceDest -Source (Join-Path $repoRoot "app_icon.ico") -Destination "."),
     "--add-data", (New-PyInstallerSourceDest -Source (Join-Path $repoRoot "filigran.png") -Destination "."),
     "--add-data", (New-PyInstallerSourceDest -Source (Join-Path $repoRoot "DejaVuSans.ttf") -Destination "."),
     "--add-data", (New-PyInstallerSourceDest -Source (Join-Path $repoRoot "KULLANIM_KILAVUZU.md") -Destination "."),
