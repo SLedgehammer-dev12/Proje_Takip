@@ -1,5 +1,20 @@
 # Değişiklik Günlüğü
 
+## v2.1.6 (31 Mart 2026)
+
+### Dil ve Kullanılabilirlik
+
+- Uygulamaya kalıcı Türkçe/İngilizce dil seçimi eklendi
+- Ana menü, temel paneller, update mesajları ve sık kullanılan dialoglar seçilen dile göre yeniden uygulanır hale getirildi
+- Eski mojibake/metin bozulmalarını toparlayan merkezi i18n katmanı eklendi
+
+### Dağıtım ve Güncelleme
+
+- `v2.1.5` kullanıcılarının görebileceği yeni `v2.1.6` GitHub release metadata'sı hazırlandı
+- Release notları ve updater sözleşmesi yeni sürüm ile hizalandı
+
+---
+
 ## v2.0.9 (27 Mart 2026)
 
 ### İyileştirmeler ve Hata Düzeltmeleri

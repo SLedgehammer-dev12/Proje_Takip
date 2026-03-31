@@ -1,4 +1,4 @@
-# Proje Takip Sistemi v2.0.1
+# Proje Takip Sistemi v2.1.6
 
 Yerelde çalışan, PySide6 tabanlı proje ve revizyon takip uygulaması.
 
@@ -62,8 +62,8 @@ python main.py
 Uygulama içindeki `Güncellemeleri Kontrol Et` akışı doğrudan GitHub `Release` kaynağını kullanır. Sadece `push` yapmak yeterli değildir. İstemcinin yeni sürümü görebilmesi için GitHub üzerinde yeni bir `Release` yayınlanmalıdır.
 
 Mevcut ayarlar:
-- Repo: [karkajinho/Proje_Takip](https://github.com/karkajinho/Proje_Takip)
-- Release sayfası: [latest releases](https://github.com/karkajinho/Proje_Takip/releases/latest)
+- Repo: [SLedgehammer-dev12/Proje_Takip](https://github.com/SLedgehammer-dev12/Proje_Takip)
+- Release sayfası: [latest releases](https://github.com/SLedgehammer-dev12/Proje_Takip/releases/latest)
 
 ### Release yayınlama kuralları
 

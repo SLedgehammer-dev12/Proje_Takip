@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QScrollArea
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
+from i18n import set_widget_text
 from models import RevizyonModel
 
 
@@ -53,10 +54,13 @@ class PreviewPanel(QWidget):
         self.current_document_payload = revision
         if pixmap:
             self.pdf_label.setPixmap(pixmap)
-            self.onizleme_etiketi.setText(f"Önizleme: {revision.revizyon_kodu}")
+            set_widget_text(self.onizleme_etiketi, f"Önizleme: {revision.revizyon_kodu}")
         else:
             self.pdf_label.clear()
-            self.onizleme_etiketi.setText("Önizleme yükleniyor veya mevcut değil...")
+            set_widget_text(
+                self.onizleme_etiketi,
+                "Önizleme yükleniyor veya mevcut değil...",
+            )
 
         self.goruntule_btn.setEnabled(True)
 
@@ -64,7 +68,7 @@ class PreviewPanel(QWidget):
         self.current_revision = None
         self.current_document_payload = None
         self.pdf_label.clear()
-        self.onizleme_etiketi.setText("Bir revizyon seçerek dokümanı ön izleyin.")
+        set_widget_text(self.onizleme_etiketi, "Bir revizyon seçerek dokümanı ön izleyin.")
         self.goruntule_btn.setEnabled(False)
 
     def _on_view_clicked(self):

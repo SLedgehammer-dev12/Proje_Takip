@@ -10,7 +10,7 @@ Usage (high level):
   from services.update_client import check_and_download_latest
 
   path = check_and_download_latest(
-      owner="karkajinho",
+      owner="SLedgehammer-dev12",
       repo="Proje_Takip",
       current_version="1.3",
       match_asset_filter="ProjeTakip-.*\\.exe",

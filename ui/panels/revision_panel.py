@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
+from i18n import tr
 from typing import List
 from letter_resolution import has_revision_letter, resolve_revision_letter_candidate
 from models import RevizyonModel, Durum
@@ -41,6 +42,49 @@ class RevisionPanel(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 0, 0)
         btn_row.setSpacing(6)
+
+        tracking_button_style = """
+            QPushButton {
+                background-color: #ffffff;
+                color: #2f3542;
+                border: 1px solid #d9dee7;
+                border-radius: 7px;
+                padding: 3px 10px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #fff5ee;
+                border-color: #f0b284;
+            }
+            QPushButton:pressed {
+                background-color: #ffe8d9;
+            }
+            QPushButton:disabled {
+                background-color: #f4f6f9;
+                color: #9aa3b2;
+                border-color: #e6e9ef;
+            }
+            """
+
+        self.revizyon_takip_btn = QPushButton("Takip Notu")
+        self.revizyon_takip_btn.setToolTip(
+            "Seçili revizyona takip notu ekle veya güncelle"
+        )
+        self.revizyon_takip_btn.setEnabled(False)
+        self.revizyon_takip_btn.setFixedHeight(28)
+        self.revizyon_takip_btn.setCursor(Qt.PointingHandCursor)
+        self.revizyon_takip_btn.setStyleSheet(tracking_button_style)
+        btn_row.addWidget(self.revizyon_takip_btn)
+
+        self.revizyon_takip_kaldir_btn = QPushButton("Takibi Kaldır")
+        self.revizyon_takip_kaldir_btn.setToolTip(
+            "Seçili revizyonu aktif takip listesinden çıkar"
+        )
+        self.revizyon_takip_kaldir_btn.setEnabled(False)
+        self.revizyon_takip_kaldir_btn.setFixedHeight(28)
+        self.revizyon_takip_kaldir_btn.setCursor(Qt.PointingHandCursor)
+        self.revizyon_takip_kaldir_btn.setStyleSheet(tracking_button_style)
+        btn_row.addWidget(self.revizyon_takip_kaldir_btn)
 
         self.view_letter_btn = QPushButton("📄 Yazıyı Görüntüle")
         self.view_letter_btn.setToolTip(
@@ -119,14 +163,14 @@ class RevisionPanel(QWidget):
                     display_broad_type = display_letter.broad_type
 
                 yazi_turu_display = {
-                    "gelen": "📥 Gelen Yazı",
-                    "giden": "📤 Giden Yazı",
+                    "gelen": tr("📥 Gelen Yazı"),
+                    "giden": tr("📤 Giden Yazı"),
                     "yok": "-",
                 }.get(display_broad_type, "-")
 
                 item = QTreeWidgetItem(tree)
                 item.setText(0, rev.revizyon_kodu)
-                item.setText(1, rev.durum)
+                item.setText(1, tr(rev.durum))
                 item.setText(2, rev.aciklama or "")
                 item.setText(3, yazi_turu_display)
                 item.setText(4, yazi_no)
@@ -135,11 +179,11 @@ class RevisionPanel(QWidget):
                 filename_display = getattr(rev, "dosya_adi", None) or rev.dokuman_durumu
                 item.setText(6, filename_display)
                 yazi_dokuman_durumu = getattr(rev, "yazi_dokuman_durumu", None) or "-"
-                item.setText(7, yazi_dokuman_durumu)
+                item.setText(7, tr(yazi_dokuman_durumu))
                 supheli = int(getattr(rev, "supheli_yazi_dokumani", 0) or 0)
-                item.setText(8, "Aynı Dosya" if supheli else "-")
+                item.setText(8, tr("Aynı Dosya") if supheli else "-")
                 takipte_mi = int(getattr(rev, "takipte_mi", 0) or 0)
-                item.setText(9, "Takipte" if takipte_mi else "-")
+                item.setText(9, tr("Takipte") if takipte_mi else "-")
                 takip_notu = getattr(rev, "takip_notu", None)
                 if takip_notu:
                     item.setToolTip(9, takip_notu)
@@ -177,9 +221,15 @@ class RevisionPanel(QWidget):
         if items:
             rev = items[0].data(0, Qt.UserRole)
             self.revision_selected.emit(rev)
+            self.revizyon_takip_btn.setEnabled(bool(rev))
+            self.revizyon_takip_kaldir_btn.setEnabled(
+                bool(rev and int(getattr(rev, "takipte_mi", 0) or 0) == 1)
+            )
             self.view_letter_btn.setEnabled(bool(rev and has_revision_letter(rev)))
         else:
             self.revision_selected.emit(None)
+            self.revizyon_takip_btn.setEnabled(False)
+            self.revizyon_takip_kaldir_btn.setEnabled(False)
             self.view_letter_btn.setEnabled(False)
 
     def _on_item_double_clicked(self, item, column):

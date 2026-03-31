@@ -41,6 +41,7 @@ import ctypes
 from app_icon import load_application_icon
 from app_paths import get_resource_path
 from config import APP_ICON_FILE, APP_NAME, APP_USER_MODEL_ID, APP_VERSION, CHANGELOG
+from i18n import init_i18n, tr
 
 # =============================================================================
 # WINDOWS TASKBAR İKON DESTEĞİ
@@ -106,6 +107,7 @@ def main():
 
     try:
         app = QApplication(sys.argv)
+        init_i18n(app)
         app_icon = load_application_icon(icon_name=APP_ICON_FILE)
         if not app_icon.isNull():
             app.setWindowIcon(app_icon)
@@ -114,7 +116,7 @@ def main():
                 app.setDesktopFileName(APP_USER_MODEL_ID)
             except Exception:
                 pass
-        app.setApplicationDisplayName(APP_NAME)
+        app.setApplicationDisplayName(tr(APP_NAME))
 
         # Apply theme + log styling if available
         _apply_stylesheet(app)

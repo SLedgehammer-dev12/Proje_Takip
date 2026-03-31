@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v2.1.5"
+APP_VERSION = "v2.1.6"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,11 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v2.1.6": [
+        "ARAYUZ: Uygulamaya kalici Turkce/Ingilizce dil secimi eklendi; ana menu, paneller ve kritik dialoglar secilen dile gore guncelleniyor.",
+        "METIN: Eski kodlama bozulmalarini onaran merkezi i18n katmani eklendi; gorunur mojibake metinlerin buyuk kismi duzeltildi.",
+        "GUNCELLEME: GitHub release/updater sozlesmesi v2.1.6 ile surduruldu; v2.1.5 istemcileri yeni checksum'li pakete guncellenebilecek.",
+    ],
     "v2.1.5": [
         "PERFORMANS: Yazi on izleme akisi ana revizyon on izlemesinden ayrildi; hizli satir dolasiminda gereksiz ikinci PDF render ve BLOB okuma yuku azaltildi.",
         "BELLEK: PDF render worker cache mantigi guclendirildi, belge imzasi bazli tekrar kullanim eklendi ve sicak yoldaki zorunlu GC temizligi kaldirildi.",

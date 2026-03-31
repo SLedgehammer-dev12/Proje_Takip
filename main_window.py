@@ -48,6 +48,16 @@ from config import (
     UPDATE_REPO_NAME,
     UPDATE_REPO_OWNER,
 )
+from i18n import (
+    apply_language,
+    get_current_language,
+    set_current_language,
+    set_placeholder_text,
+    set_widget_text,
+    set_widget_tooltip,
+    set_window_title,
+    tr,
+)
 
 # YENÄ°: Veri modelleri import edildi
 from models import Durum, ProjeModel, RevizyonModel
@@ -952,14 +962,17 @@ class AnaPencere(QMainWindow):
         self.revizyon_agaci.installEventFilter(self)
 
         # Pencere baÅŸlÄ±ÄŸÄ±nÄ± DB dosyasÄ± ile gÃ¼ncelle
-        db_name = os.path.basename(self.current_db_file)
-        self.setWindowTitle(f"{APP_NAME} - {APP_VERSION} - [{db_name}]")
+        self._update_window_title()
 
         # Son kullanÄ±lan dosyayÄ± kaydet
         self._son_kullanilan_dosya_kaydet()
         # Initialize action states
         try:
             self._update_action_states()
+        except Exception:
+            pass
+        try:
+            self._apply_current_language()
         except Exception:
             pass
 
@@ -1026,7 +1039,7 @@ class AnaPencere(QMainWindow):
             if self._update_download_in_progress:
                 if getattr(self, "_status", None):
                     self._status.showMessage(
-                        "Guncelleme indirme islemi zaten devam ediyor.",
+                        tr("Güncelleme indirme işlemi zaten devam ediyor."),
                         4000,
                     )
                 return
@@ -1041,14 +1054,16 @@ class AnaPencere(QMainWindow):
             
             if not dest_dir:
                 if getattr(self, "_status", None):
-                    self._status.showMessage("Ä°ndirme iÅŸlemi iptal edildi.", 4000)
+                    self._status.showMessage(tr("İndirme işlemi iptal edildi."), 4000)
                 return
 
             self._update_download_in_progress = True
             self._set_update_action_enabled(False)
-            asset_name = asset.get("name", "gÃ¼ncelleme paketi")
+            asset_name = asset.get("name", tr("güncelleme paketi"))
             if getattr(self, "_status", None):
-                self._status.showMessage(f"Guncelleme indiriliyor: {asset_name}", 5000)
+                self._status.showMessage(
+                    tr(f"Güncelleme indiriliyor: {asset_name}"), 5000
+                )
 
             def _worker():
                 result = {"asset_name": asset_name, "release_url": release_url}
@@ -1107,8 +1122,8 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"GÃ¼ncelleme indirme baÅŸlatÄ±lamadÄ±: {e}", exc_info=True)
             QMessageBox.critical(
                 self,
-                "Ä°ndirme BaÅŸlatÄ±lamadÄ±",
-                f"GÃ¼ncelleme indirmesi baÅŸlatÄ±lamadÄ±:\n{e}",
+                tr("İndirme Başlatılamadı"),
+                tr(f"Güncelleme indirmesi başlatılamadı:\n{e}"),
             )
 
     def check_for_updates(self, silent: bool = False, startup: bool = False):
@@ -1117,7 +1132,7 @@ class AnaPencere(QMainWindow):
             if self._update_check_in_progress:
                 if not silent and getattr(self, "_status", None):
                     self._status.showMessage(
-                        "GÃ¼ncelleme kontrolÃ¼ zaten devam ediyor.", 4000
+                        tr("Güncelleme kontrolü zaten devam ediyor."), 4000
                     )
                 return
 
@@ -1128,7 +1143,14 @@ class AnaPencere(QMainWindow):
                 "Baslangic" if startup else "Elle",
             )
             if getattr(self, "_status", None):
-                self._status.showMessage("Baslangicta guncellemeler kontrol ediliyor..." if startup else "Guncellemeler kontrol ediliyor...", 4000)
+                self._status.showMessage(
+                    tr(
+                        "Başlangıçta güncellemeler kontrol ediliyor..."
+                        if startup
+                        else "Güncellemeler kontrol ediliyor..."
+                    ),
+                    4000,
+                )
 
             def _worker():
                 result = {"silent": bool(silent), "startup": bool(startup)}
@@ -1194,14 +1216,21 @@ class AnaPencere(QMainWindow):
                 )
                 if startup and getattr(self, "_status", None):
                     self._status.showMessage(
-                        "Baslangic guncelleme kontrolu tamamlandi. Yeni surum bulunamadi.",
+                        tr("Başlangıç güncelleme kontrolü tamamlandı. Yeni sürüm bulunamadı."),
                         4000,
                     )
                 elif getattr(self, "_status", None):
-                    self._status.showMessage("Baslangic guncelleme kontrolu tamamlandi. Yeni surum bulunamadi." if startup else "Guncelleme bulunamadi.", 3000)
+                    self._status.showMessage(
+                        tr(
+                            "Başlangıç güncelleme kontrolü tamamlandı. Yeni sürüm bulunamadı."
+                            if startup
+                            else "Güncelleme bulunamadı."
+                        ),
+                        3000,
+                    )
                 if not silent:
                     QMessageBox.information(
-                        self, "GÃ¼ncelleme", "Yeni sÃ¼rÃ¼m bulunamadÄ±."
+                        self, tr("Güncelleme"), tr("Yeni sürüm bulunamadı.")
                     )
                 return
 
@@ -1213,7 +1242,7 @@ class AnaPencere(QMainWindow):
                 )
                 if getattr(self, "_status", None):
                     self._status.showMessage(
-                        f"Yeni sÃ¼rÃ¼m bulundu: {latest_tag or 'gÃ¼ncel release'}", 6000
+                        tr(f"Yeni sürüm bulundu: {latest_tag or 'güncel release'}"), 6000
                     )
                 if silent and not startup:
                     return
@@ -1224,19 +1253,26 @@ class AnaPencere(QMainWindow):
 
                 msg = QMessageBox(self)
                 msg.setIcon(QMessageBox.Information)
-                msg.setWindowTitle("GÃ¼ncelleme Bulundu")
-                msg.setText(f"Yeni sÃ¼rÃ¼m bulundu: {latest_tag}")
-                msg.setInformativeText("Baslangic kontrolu sirasinda yeni bir surum bulundu. Indirebilir veya release sayfasini acabilirsiniz." if startup else "Yeni surumu indirebilir veya release sayfasini acabilirsiniz.")
-                msg.setDetailedText(
-                    f"SÃ¼rÃ¼m: {latest_tag}\n"
-                    f"YayÄ±n Tarihi: {published_at}\n"
-                    f"Dosya: {asset_name}\n"
-                    f"Release URL: {release_url}\n\n"
-                    f"Release NotlarÄ±:\n{notes or 'Release notu bulunamadÄ±.'}"
+                set_window_title(msg, "Güncelleme Bulundu")
+                set_widget_text(msg, f"Yeni sürüm bulundu: {latest_tag}")
+                msg.setInformativeText(
+                    tr(
+                        "Başlangıç kontrolü sırasında yeni bir sürüm bulundu. İndirebilir veya release sayfasını açabilirsiniz."
+                        if startup
+                        else "Yeni sürümü indirebilir veya release sayfasını açabilirsiniz."
+                    )
                 )
-                download_btn = msg.addButton("Ä°ndir", QMessageBox.AcceptRole)
-                open_btn = msg.addButton("Release SayfasÄ±nÄ± AÃ§", QMessageBox.ActionRole)
-                msg.addButton("Sonra", QMessageBox.RejectRole)
+                msg.setDetailedText(
+                    f"{tr('Sürüm')}: {latest_tag}\n"
+                    f"{tr('Yayın Tarihi')}: {published_at}\n"
+                    f"{tr('Dosya')}: {asset_name}\n"
+                    f"Release URL: {release_url}\n\n"
+                    f"{tr('Release Notları')}:\n{notes or tr('Release notu bulunamadı.')}"
+                )
+                download_btn = msg.addButton(tr("İndir"), QMessageBox.AcceptRole)
+                open_btn = msg.addButton(tr("Release Sayfasını Aç"), QMessageBox.ActionRole)
+                msg.addButton(tr("Sonra"), QMessageBox.RejectRole)
+                apply_language(msg)
                 msg.exec()
 
                 clicked = msg.clickedButton()
@@ -1245,8 +1281,8 @@ class AnaPencere(QMainWindow):
                 elif clicked == open_btn and not self._open_release_page(release_url):
                     QMessageBox.warning(
                         self,
-                        "BaÄŸlantÄ± AÃ§Ä±lamadÄ±",
-                        f"Release sayfasÄ± aÃ§Ä±lamadÄ±:\n{release_url}",
+                        tr("Bağlantı Açılamadı"),
+                        tr(f"Release sayfası açılamadı:\n{release_url}"),
                     )
                 return
 
@@ -1257,24 +1293,26 @@ class AnaPencere(QMainWindow):
                 )
                 if getattr(self, "_status", None):
                     self._status.showMessage(
-                        "Yeni sÃ¼rÃ¼m bulundu ancak indirilebilir dosya bulunamadÄ±.",
+                        tr("Yeni sürüm bulundu ancak indirilebilir dosya bulunamadı."),
                         5000,
                     )
                 if silent:
                     return
                 reply = QMessageBox.question(
                     self,
-                    "GÃ¼ncelleme Bulundu",
-                    "Yeni sÃ¼rÃ¼m bulundu ancak uygun indirme dosyasÄ± release iÃ§inde bulunamadÄ±.\n"
-                    "Release sayfasÄ±nÄ± aÃ§mak ister misiniz?",
+                    tr("Güncelleme Bulundu"),
+                    tr(
+                        "Yeni sürüm bulundu ancak uygun indirme dosyası release içinde bulunamadı.\n"
+                        "Release sayfasını açmak ister misiniz?"
+                    ),
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.Yes,
                 )
                 if reply == QMessageBox.Yes and not self._open_release_page(release_url):
                     QMessageBox.warning(
                         self,
-                        "BaÄŸlantÄ± AÃ§Ä±lamadÄ±",
-                        f"Release sayfasÄ± aÃ§Ä±lamadÄ±:\n{release_url}",
+                        tr("Bağlantı Açılamadı"),
+                        tr(f"Release sayfası açılamadı:\n{release_url}"),
                     )
                 return
 
@@ -1285,15 +1323,17 @@ class AnaPencere(QMainWindow):
                 )
                 if getattr(self, "_status", None):
                     self._status.showMessage(
-                        "Yeni sÃ¼rÃ¼m bulundu ancak checksum doÄŸrulamasÄ± yapÄ±lamÄ±yor.",
+                        tr("Yeni sürüm bulundu ancak checksum doğrulaması yapılamıyor."),
                         5000,
                     )
                 if not silent:
                     QMessageBox.warning(
                         self,
-                        "GÃ¼ncelleme DoÄŸrulanamadÄ±",
-                        "Yeni sÃ¼rÃ¼m bulundu ancak release iÃ§inde doÄŸrulama iÃ§in checksum dosyasÄ± yok.\n"
-                        "DoÄŸrudan indirme kapatÄ±ldÄ±. LÃ¼tfen release sayfasÄ±ndan paketi manuel doÄŸrulayÄ±n.",
+                        tr("Güncelleme Doğrulanamadı"),
+                        tr(
+                            "Yeni sürüm bulundu ancak release içinde doğrulama için checksum dosyası yok.\n"
+                            "Doğrudan indirme kapatıldı. Lütfen release sayfasından paketi manuel doğrulayın."
+                        ),
                     )
                 return
 
@@ -1306,24 +1346,23 @@ class AnaPencere(QMainWindow):
                 error_text,
             )
             if getattr(self, "_status", None):
-                self._status.showMessage("GÃ¼ncelleme kontrolÃ¼ baÅŸarÄ±sÄ±z.", 5000)
+                self._status.showMessage(tr("Güncelleme kontrolü başarısız."), 5000)
             if not silent:
                 if error_type == "network":
-                    message = f"AÄŸ baÄŸlantÄ±sÄ± kurulamadÄ±.\n\nDetay: {error_text}"
+                    message = tr(f"Ağ bağlantısı kurulamadı.\n\nDetay: {error_text}")
                 elif error_type == "http" and "404" in str(error_text):
-                    message = (
-                        "HenÃ¼z yayÄ±nlanmÄ±ÅŸ bir gÃ¼ncelleme bulunamadÄ±.\n\n"
-                        "Bu sÃ¼rÃ¼m zaten en gÃ¼ncel halde olabilir veya "
-                        "henÃ¼z yeni bir release yayÄ±nlanmamÄ±ÅŸ olabilir.\n\n"
+                    message = tr(
+                        "Henüz yayınlanmış bir güncelleme bulunamadı.\n\n"
+                        "Bu sürüm zaten en güncel halde olabilir veya henüz yeni bir release yayınlanmamış olabilir.\n\n"
                         f"Detay: {error_text}"
                     )
                 elif error_type == "http":
-                    message = f"GitHub release bilgisi alÄ±namadÄ±.\n\nDetay: {error_text}"
+                    message = tr(f"GitHub release bilgisi alınamadı.\n\nDetay: {error_text}")
                 else:
-                    message = f"GÃ¼ncelleme kontrolÃ¼ sÄ±rasÄ±nda hata oluÅŸtu.\n\nDetay: {error_text}"
+                    message = tr(f"Güncelleme kontrolü sırasında hata oluştu.\n\nDetay: {error_text}")
                 QMessageBox.warning(
                     self,
-                    "GÃ¼ncelleme KontrolÃ¼ BaÅŸarÄ±sÄ±z",
+                    tr("Güncelleme Kontrolü Başarısız"),
                     message,
                 )
         except Exception as e:
@@ -1345,24 +1384,28 @@ class AnaPencere(QMainWindow):
             if payload.get("status") == "downloaded":
                 path = payload.get("path", "")
                 if getattr(self, "_status", None):
-                    self._status.showMessage("GÃ¼ncelleme indirildi.", 5000)
+                    self._status.showMessage(tr("Güncelleme indirildi."), 5000)
                 QMessageBox.information(
                     self,
-                    "GÃ¼ncelleme Ä°ndirildi",
-                    "GÃ¼ncelleme dosyasÄ± indirildi.\n\n"
-                    f"Konum:\n{path}\n\n"
-                    f"DoÄŸrulama: {payload.get('checksum_asset', 'checksum dosyasÄ±')}\n\n"
-                    "Kurulumu bu dosya Ã¼zerinden manuel olarak baÅŸlatabilirsiniz.",
+                    tr("Güncelleme İndirildi"),
+                    tr(
+                        "Güncelleme dosyası indirildi.\n\n"
+                        f"Konum:\n{path}\n\n"
+                        f"Doğrulama: {payload.get('checksum_asset', 'checksum dosyası')}\n\n"
+                        "Kurulumu bu dosya üzerinden manuel olarak başlatabilirsiniz."
+                    ),
                 )
                 return
 
             if getattr(self, "_status", None):
-                self._status.showMessage("GÃ¼ncelleme indirilemedi.", 5000)
+                self._status.showMessage(tr("Güncelleme indirilemedi."), 5000)
             QMessageBox.warning(
                 self,
-                "Ä°ndirme BaÅŸarÄ±sÄ±z",
-                "GÃ¼ncelleme dosyasÄ± indirilemedi.\n\n"
-                f"Detay: {payload.get('error', 'Bilinmeyen hata')}",
+                tr("İndirme Başarısız"),
+                tr(
+                    "Güncelleme dosyası indirilemedi.\n\n"
+                    f"Detay: {payload.get('error', 'Bilinmeyen hata')}"
+                ),
             )
         except Exception as e:
             try:
@@ -1420,6 +1463,10 @@ class AnaPencere(QMainWindow):
 
         # Compatibility aliases
         self.revizyon_agaci = self.revision_panel.revizyon_agaci
+        self.revizyon_takip_btn = self.revision_panel.revizyon_takip_btn
+        self.revizyon_takip_kaldir_btn = self.revision_panel.revizyon_takip_kaldir_btn
+        self.revizyon_takip_btn.clicked.connect(self.revizyon_takip_notu_ekle_duzenle)
+        self.revizyon_takip_kaldir_btn.clicked.connect(self.revizyon_takip_kaldir)
 
         # ---- Letter preview panel (below revision tree) ----
         self.yazi_onizleme_panel = QWidget()
@@ -1427,11 +1474,13 @@ class AnaPencere(QMainWindow):
         yazi_layout.setContentsMargins(0, 4, 0, 0)
         yazi_layout.setSpacing(4)
 
-        yazi_baslik = QLabel("<b>ğŸ“¬ YazÄ± Ã–n Ä°zleme</b>")
+        yazi_baslik = QLabel("<b>\U0001f4ec Yaz\u0131 \u00d6n \u0130zleme</b>")
         yazi_baslik.setStyleSheet("font-size: 11pt; color: #212529;")
         yazi_layout.addWidget(yazi_baslik)
 
-        self.yazi_onizleme_etiketi = QLabel("Revizyona ait yazÄ± Ã¶n izlemesi burada gÃ¶rÃ¼nÃ¼r.")
+        self.yazi_onizleme_etiketi = QLabel(
+            "Revizyona ait yaz\u0131 \u00f6n izlemesi burada g\u00f6r\u00fcn\u00fcr."
+        )
         self.yazi_onizleme_etiketi.setAlignment(Qt.AlignCenter)
         self.yazi_onizleme_etiketi.setWordWrap(True)
         self.yazi_onizleme_etiketi.setStyleSheet("color: #777; font-size: 10pt;")
@@ -1441,7 +1490,7 @@ class AnaPencere(QMainWindow):
         self.yazi_onizleme_scroll.setWidgetResizable(True)
         yazi_layout.addWidget(self.yazi_onizleme_scroll)
 
-        self.yazi_ac_btn = QPushButton("ğŸ“„ YazÄ±yÄ± Tam Ekran AÃ§")
+        self.yazi_ac_btn = QPushButton("\U0001f4c4 Yaz\u0131y\u0131 Tam Ekran A\u00e7")
         self.yazi_ac_btn.setEnabled(False)
         self.yazi_ac_btn.setFixedHeight(30)
         self.yazi_ac_btn.setCursor(Qt.PointingHandCursor)
@@ -1517,6 +1566,56 @@ class AnaPencere(QMainWindow):
 
         return _ui_setup_menubar(self)
 
+    def _update_window_title(self):
+        db_name = os.path.basename(self.current_db_file)
+        set_window_title(self, f"{APP_NAME} - {APP_VERSION} - [{db_name}]")
+
+    def _refresh_language_actions(self):
+        current_language = get_current_language()
+        for language_code, action in getattr(self, "language_actions", {}).items():
+            try:
+                action.blockSignals(True)
+                action.setChecked(language_code == current_language)
+            except Exception:
+                pass
+            finally:
+                try:
+                    action.blockSignals(False)
+                except Exception:
+                    pass
+
+    def _apply_current_language(self):
+        self._update_window_title()
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.setApplicationDisplayName(tr(APP_NAME))
+        except Exception:
+            pass
+        apply_language(self)
+        try:
+            self.update_filter_indicator()
+        except Exception:
+            pass
+        try:
+            self._refresh_tok_theme_actions()
+        except Exception:
+            pass
+        self._refresh_language_actions()
+
+    def set_app_language(self, language: str):
+        previous_language = get_current_language()
+        active_language = set_current_language(language)
+        if active_language == previous_language:
+            self._apply_current_language()
+            return
+        self.logger.info("Uygulama dili değiştirildi: %s", active_language)
+        self._apply_current_language()
+        try:
+            self.yenile()
+        except Exception:
+            pass
+
     def show_user_guide_tab(self):
         from ui.main_window_ui import show_user_guide_tab as _ui_show_guide
 
@@ -1528,10 +1627,10 @@ class AnaPencere(QMainWindow):
         """SÃ¼rÃ¼m bilgisi ve katkÄ± mesajÄ±nÄ± gÃ¶ster."""
         try:
             mesaj = (
-                f"{APP_NAME} {APP_VERSION}\n\n"
-                "ALPER BERKAN YILMAZ VE Ã–MER ERBAÅâ€™IN katkÄ±larÄ± ile hazÄ±rlanmÄ±ÅŸtÄ±r."
+                f"{tr(APP_NAME)} {APP_VERSION}\n\n"
+                f"{tr('ALPER BERKAN YILMAZ VE ÖMER ERBAŞ’IN katkıları ile hazırlanmıştır.')}"
             )
-            QMessageBox.information(self, "SÃ¼rÃ¼m Bilgisi", mesaj)
+            QMessageBox.information(self, tr("Sürüm Bilgisi"), mesaj)
         except Exception as e:
             self.logger.error(f"SÃ¼rÃ¼m bilgisi gÃ¶sterilemedi: {e}")
 
@@ -1627,7 +1726,7 @@ class AnaPencere(QMainWindow):
 
             if hasattr(self, "tok_action"):
                 try:
-                    self.tok_action.setText(f"Tema: {meta['label']}")
+                    set_widget_text(self.tok_action, f"Tema: {meta['label']}")
                     self.tok_action.setIcon(QIcon.fromTheme(meta.get("icon", "")))
                 except Exception:
                     pass
@@ -1731,7 +1830,7 @@ class AnaPencere(QMainWindow):
         if not hasattr(self, "yazi_onizleme_etiketi"):
             return
         self.yazi_onizleme_etiketi.clear()
-        self.yazi_onizleme_etiketi.setText(text)
+        set_widget_text(self.yazi_onizleme_etiketi, text)
         self.yazi_ac_btn.setEnabled(False)
         self._current_yazi_payload = None
 
@@ -1831,14 +1930,14 @@ class AnaPencere(QMainWindow):
     def _open_revision_document(self, rev: Optional[RevizyonModel]) -> bool:
         """Open the exact revision document represented by the payload."""
         if not self.document_service:
-            QMessageBox.critical(self, "AÃ§ma HatasÄ±", "DokÃ¼man servisi yÃ¼klenemedi.")
+            QMessageBox.critical(self, "A\u00e7ma Hatas\u0131", "Dok\u00fcman servisi y\u00fcklenemedi.")
             return False
         return self.document_service.open_revision_document(rev)
 
     def _open_letter_document(self, payload: Optional[dict]) -> bool:
         """Open the exact letter document represented by the preview payload."""
         if not self.document_service:
-            QMessageBox.critical(self, "AÃ§ma HatasÄ±", "DokÃ¼man servisi yÃ¼klenemedi.")
+            QMessageBox.critical(self, "A\u00e7ma Hatas\u0131", "Dok\u00fcman servisi y\u00fcklenemedi.")
             return False
         return self.document_service.open_letter_document(payload)
 
@@ -1846,32 +1945,32 @@ class AnaPencere(QMainWindow):
         """Open the selected revision's associated incoming/outgoing letter."""
         try:
             if not self.document_service:
-                QMessageBox.critical(self, "AÃƒÂ§ma HatasÃ„Â±", "DokÃƒÂ¼man servisi yÃƒÂ¼klenemedi.")
+                QMessageBox.critical(self, "A\u00e7ma Hatas\u0131", "Dok\u00fcman servisi y\u00fcklenemedi.")
                 return False
             if not rev:
-                QMessageBox.warning(self, "UyarÃ„Â±", "AÃƒÂ§Ã„Â±lacak revizyon bulunamadÃ„Â±.")
+                QMessageBox.warning(self, "Uyar\u0131", "A\u00e7\u0131lacak revizyon bulunamad\u0131.")
                 return False
 
             payload = self._build_letter_payload_for_revision(rev)
             if not payload:
                 QMessageBox.information(
                     self,
-                    "YazÃ„Â± BulunamadÃ„Â±",
-                    "SeÃƒÂ§ili revizyona ait aÃƒÂ§Ã„Â±labilir yazÃ„Â± dokÃƒÂ¼manÃ„Â± bulunamadÃ„Â±.",
+                    "Yaz\u0131 Bulunamad\u0131",
+                    "Se\u00e7ili revizyona ait a\u00e7\u0131labilir yaz\u0131 dok\u00fcman\u0131 bulunamad\u0131.",
                 )
                 return False
 
             return self._open_letter_document(payload)
         except Exception as e:
             self.logger.error(
-                "Revizyondan yazÃ„Â± dokÃƒÂ¼manÃ„Â± aÃƒÂ§Ã„Â±lÃ„Â±rken hata: %s",
+                "Revizyondan yaz\u0131 dok\u00fcman\u0131 a\u00e7\u0131l\u0131rken hata: %s",
                 e,
                 exc_info=True,
             )
             QMessageBox.critical(
                 self,
                 "Hata",
-                f"YazÃ„Â± dokÃƒÂ¼manÃ„Â± aÃƒÂ§Ã„Â±lÃ„Â±rken hata oluÃ…Å¸tu:\n{str(e)}"
+                f"Yaz\u0131 dok\u00fcman\u0131 a\u00e7\u0131l\u0131rken hata olu\u015ftu:\n{str(e)}"
             )
             return False
 
@@ -1899,11 +1998,11 @@ class AnaPencere(QMainWindow):
                 )
             self._open_letter_document(payload)
         except Exception as e:
-            self.logger.error(f"YazÄ± dokÃ¼manÄ± aÃ§Ä±lÄ±rken hata: {e}", exc_info=True)
+            self.logger.error(f"Yaz\u0131 dok\u00fcman\u0131 a\u00e7\u0131l\u0131rken hata: {e}", exc_info=True)
             QMessageBox.critical(
                 self,
                 "Hata",
-                f"YazÄ± dokÃ¼manÄ± aÃ§Ä±lÄ±rken hata oluÅŸtu:\n{str(e)}"
+                f"Yaz\u0131 dok\u00fcman\u0131 a\u00e7\u0131l\u0131rken hata olu\u015ftu:\n{str(e)}"
             )
 
     def _on_yazi_ac_btn_clicked(self) -> bool:
@@ -1912,8 +2011,8 @@ class AnaPencere(QMainWindow):
         if not payload:
             QMessageBox.information(
                 self,
-                "YazÃ„Â± BulunamadÃ„Â±",
-                "Tam ekran aÃƒÂ§Ã„Â±lacak yazÃ„Â± dokÃƒÂ¼manÃ„Â± bulunamadÃ„Â±.",
+                "Yaz\u0131 Bulunamad\u0131",
+                "Tam ekran a\u00e7\u0131lacak yaz\u0131 dok\u00fcman\u0131 bulunamad\u0131.",
             )
             return False
         return self._open_letter_document(payload)
@@ -2063,7 +2162,9 @@ class AnaPencere(QMainWindow):
 
             self.detay_etiketleri["Proje Kodu:"].setText(proje.proje_kodu)
             self.detay_etiketleri["Proje Ä°smi:"].setText(proje.proje_ismi)
-            self.detay_etiketleri["Proje TÃ¼rÃ¼:"].setText(proje.proje_turu or "-")
+            set_widget_text(
+                self.detay_etiketleri["Proje TÃ¼rÃ¼:"], proje.proje_turu or "-"
+            )
 
             # HiyerarÅŸi yolunu bul (kategori_id'den)
             hiyerarsi = self.db.get_kategori_yolu(proje.kategori_id)
@@ -2134,13 +2235,13 @@ class AnaPencere(QMainWindow):
                 self.detay_etiketleri["En Son Revizyon Kodu:"].setText(
                     son_rev.revizyon_kodu
                 )
-                self.detay_etiketleri["Onay Durumu:"].setText(son_rev.durum)
+                set_widget_text(self.detay_etiketleri["Onay Durumu:"], son_rev.durum)
 
-                tse_durum = "GÃ¶nderildi" if son_rev.tse_gonderildi else "GÃ¶nderilmedi"
-                self.detay_etiketleri["TSE Durumu:"].setText(tse_durum)
+                tse_durum = "Gönderildi" if son_rev.tse_gonderildi else "Gönderilmedi"
+                set_widget_text(self.detay_etiketleri["TSE Durumu:"], tse_durum)
             else:
                 self.detay_etiketleri["En Son Revizyon Kodu:"].setText("-")
-                self.detay_etiketleri["Onay Durumu:"].setText(proje.durum or "-")
+                set_widget_text(self.detay_etiketleri["Onay Durumu:"], proje.durum or "-")
                 self.detay_etiketleri["TSE Durumu:"].setText("-")
 
             # Excel validation - check if project exists in master list
@@ -2153,17 +2254,17 @@ class AnaPencere(QMainWindow):
                 excel_type = excel_validation_info.get('project_type', '-')
                 
                 if is_in_list:
-                    liste_durumu = "âœ“ Bu proje listede var"
+                    liste_durumu = "✅ Bu proje listede var"
                     # Apply green color for found projects
                     self.detay_etiketleri["Liste Durumu:"].setStyleSheet("color: #2e7d32; font-weight: bold;")
                 else:
-                    liste_durumu = "âœ— Bu proje listede yok"
+                    liste_durumu = "✗ Bu proje listede yok"
                     # Apply gray color for not found projects
                     self.detay_etiketleri["Liste Durumu:"].setStyleSheet("color: #757575;")
                 
-                self.detay_etiketleri["Liste Durumu:"].setText(liste_durumu)
+                set_widget_text(self.detay_etiketleri["Liste Durumu:"], liste_durumu)
                 if "Listedeki TÃ¼r:" in self.detay_etiketleri:
-                    self.detay_etiketleri["Listedeki TÃ¼r:"].setText(excel_type)
+                    set_widget_text(self.detay_etiketleri["Listedeki TÃ¼r:"], excel_type)
             elif "Liste Durumu:" in self.detay_etiketleri:
                 # No validation info available
                 self.detay_etiketleri["Liste Durumu:"].setText("-")
@@ -2402,12 +2503,12 @@ class AnaPencere(QMainWindow):
             self.preview_state.clear()
         else:
             self.onizleme_etiketi.clear()
-        self.onizleme_etiketi.setText("Bir revizyon seÃ§erek dokÃ¼manÄ± Ã¶n izleyin.")
+        set_widget_text(self.onizleme_etiketi, "Bir revizyon seçerek dokümanı ön izleyin.")
         self.goruntule_btn.setEnabled(False)
 
         if hasattr(self, "yazi_onizleme_etiketi"):
             self._set_letter_preview_message(
-                "Revizyona ait yazÄ± Ã¶n izlemesi burada gÃ¶rÃ¼nÃ¼r."
+                "Revizyona ait yazı ön izlemesi burada görünür."
             )
 
     def _refresh_current_project(self, keep_rev_id: Optional[int] = None):
@@ -2531,7 +2632,7 @@ class AnaPencere(QMainWindow):
         """Filtre gÃ¶stergesini gÃ¼ncelle"""
         filter_count = len(self.filter_manager.active_filters)
         if filter_count > 0:
-            self.filter_indicator.setText(f"Filtre: {filter_count} aktif")
+            set_widget_text(self.filter_indicator, f"Filtre: {filter_count} aktif")
             self.filter_indicator.setStyleSheet(
                 "color: blue; font-weight: bold; background-color: #e6f3ff; padding: 5px; border: 1px solid #b3d9ff; border-radius: 3px;"
             )
@@ -2540,11 +2641,11 @@ class AnaPencere(QMainWindow):
                     self, "_status", None
                 ):
                     # Optional status message to reflect active filters
-                    self._status.showMessage(f"{filter_count} aktif filtre", 2000)
+                    self._status.showMessage(tr(f"Filtre: {filter_count} aktif"), 2000)
             except Exception:
                 pass
         else:
-            self.filter_indicator.setText("Filtre: Yok")
+            set_widget_text(self.filter_indicator, "Filtre: Yok")
             self.filter_indicator.setStyleSheet("color: #666; padding: 5px;")
 
     def clear_filters(self):
@@ -2752,9 +2853,9 @@ class AnaPencere(QMainWindow):
             if hasattr(self, "_status"):
                 user_display = self.auth_service.get_current_display_name()
                 if self.auth_service.is_guest:
-                    status_text = f"ğŸ‘¤ {user_display} (Sadece GÃ¶rÃ¼ntÃ¼leme)"
+                    status_text = f"👤 {user_display} ({tr('Sadece Görüntüleme')})"
                 else:
-                    status_text = f"âœ… {user_display}"
+                    status_text = f"✅ {user_display}"
                 
                 # Create or update user status label
                 if not hasattr(self, "user_status_label"):
@@ -2762,7 +2863,7 @@ class AnaPencere(QMainWindow):
                     self.user_status_label = QLabel()
                     self._status.addPermanentWidget(self.user_status_label)
                 
-                self.user_status_label.setText(status_text)
+                set_widget_text(self.user_status_label, status_text)
         except Exception as e:
             self.logger.warning(f"Failed to update user status label: {e}")
 
@@ -2816,7 +2917,7 @@ class AnaPencere(QMainWindow):
                             clear_visual=True,
                         )
                     else:
-                        self.onizleme_etiketi.setText(load_result.message)
+                        set_widget_text(self.onizleme_etiketi, load_result.message)
                 return
 
             dokuman_verisi = load_result.document_bytes
@@ -2835,7 +2936,7 @@ class AnaPencere(QMainWindow):
             if self.preview_state:
                 self.preview_state.show_loading(secili_revizyon)
             else:
-                self.onizleme_etiketi.setText("Ã–n izleme yÃ¼kleniyor...")
+                set_widget_text(self.onizleme_etiketi, "Ön izleme yükleniyor...")
                 self.goruntule_btn.setEnabled(False)
 
             self._start_pdf_render.emit(dokuman_verisi, self.zoom_factor, rev_id)
@@ -2845,9 +2946,9 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"Preview update error: {e}", exc_info=True)
             self._clear_preview()
             if self.preview_state:
-                self.preview_state.show_status("Ã–n izleme hatasÄ±", clear_visual=True)
+                self.preview_state.show_status("Ön izleme hatası", clear_visual=True)
             else:
-                self.onizleme_etiketi.setText("Ã–n izleme hatasÄ±")
+                set_widget_text(self.onizleme_etiketi, "Ön izleme hatası")
 
     # --- Ã‡Ã–KME DÃœZELTMESÄ° (ADIM 3): Slot'a rev_id (int) eklendi ve GÃœVENLÄ°K KONTROLÃœ yapÄ±ldÄ± ---
     @Slot(QImage, int)
@@ -2924,7 +3025,7 @@ class AnaPencere(QMainWindow):
         if self.preview_state:
             self.preview_state.show_render_error(error_msg)
             return
-        self.onizleme_etiketi.setText(f"Ã–nizleme oluÅŸturulamadÄ±.\n{error_msg}")
+        set_widget_text(self.onizleme_etiketi, f"Önizleme oluşturulamadı.\n{error_msg}")
         self.goruntule_btn.setEnabled(False)
 
     @Slot(int)
@@ -3005,13 +3106,13 @@ class AnaPencere(QMainWindow):
         menu = QMenu(self)
 
         # Yeni Eklenen "YazÄ±yÄ± GÃ¶rÃ¼ntÃ¼le" Aksiyonu
-        view_letter_action = menu.addAction("ğŸ“„ YazÄ±yÄ± GÃ¶rÃ¼ntÃ¼le")
-        has_letter = getattr(rev, "yazi_turu", "yok") in ("gelen", "giden")
+        view_letter_action = menu.addAction("\U0001f4c4 Yaz\u0131y\u0131 G\u00f6r\u00fcnt\u00fcle")
+        has_letter = bool(self._build_letter_payload_for_revision(rev))
         view_letter_action.setEnabled(has_letter)
         menu.addSeparator()
 
-        takip_action = menu.addAction("Takip Notu Ekle/GÃ¼ncelle...")
-        takip_kaldir_action = menu.addAction("Takip Ä°ÅŸaretini KaldÄ±r")
+        takip_action = menu.addAction("Takip Notu Ekle/G\u00fcncelle...")
+        takip_kaldir_action = menu.addAction("Takibi Kald\u0131r")
         takip_kaldir_action.setEnabled(
             int(getattr(rev, "takipte_mi", 0) or 0) == 1
         )
@@ -3545,7 +3646,7 @@ class AnaPencere(QMainWindow):
             return
         item = self._get_secili_revizyon_item()
         if not item:
-            QMessageBox.warning(self, "UyarÄ±", "LÃ¼tfen bir revizyon seÃ§in.")
+            QMessageBox.warning(self, "Uyar\u0131", "L\u00fctfen bir revizyon se\u00e7in.")
             return
         rev: RevizyonModel = item.data(0, Qt.UserRole)
         if not rev:
@@ -3556,14 +3657,14 @@ class AnaPencere(QMainWindow):
         not_metni, ok = QInputDialog.getMultiLineText(
             self,
             "Takip Notu",
-            "SeÃ§ili revizyon iÃ§in takip notu:",
+            "Se\u00e7ili revizyon i\u00e7in takip notu:",
             varsayilan_not,
         )
         if not ok:
             return
         not_metni = (not_metni or "").strip()
         if not not_metni:
-            QMessageBox.warning(self, "Eksik Bilgi", "Takip notu boÅŸ bÄ±rakÄ±lamaz.")
+            QMessageBox.warning(self, "Eksik Bilgi", "Takip notu bo\u015f b\u0131rak\u0131lamaz.")
             return
 
         self.db.revizyonu_takibe_al(rev.id, not_metni)
@@ -3571,29 +3672,29 @@ class AnaPencere(QMainWindow):
             self._refresh_current_project(keep_rev_id=rev.id)
         except Exception:
             self.revizyonlari_yukle(self.secili_proje_id)
-        QMessageBox.information(self, "BaÅŸarÄ±lÄ±", "Revizyon takip listesine eklendi.")
+        QMessageBox.information(self, "Ba\u015far\u0131l\u0131", "Revizyon takip listesine eklendi.")
 
     def revizyon_takip_kaldir(self):
         """Remove selected revision from active tracking list."""
-        if not self._check_write_permission("revizyon takibini kaldÄ±rmak"):
+        if not self._check_write_permission("revizyon takibini kald\u0131rmak"):
             return
         item = self._get_secili_revizyon_item()
         if not item:
-            QMessageBox.warning(self, "UyarÄ±", "LÃ¼tfen bir revizyon seÃ§in.")
+            QMessageBox.warning(self, "Uyar\u0131", "L\u00fctfen bir revizyon se\u00e7in.")
             return
         rev: RevizyonModel = item.data(0, Qt.UserRole)
         if not rev:
             return
         if int(getattr(rev, "takipte_mi", 0) or 0) != 1:
             QMessageBox.information(
-                self, "Bilgi", "Bu revizyon aktif takip listesinde deÄŸil."
+                self, "Bilgi", "Bu revizyon aktif takip listesinde de\u011fil."
             )
             return
 
         cevap = QMessageBox.question(
             self,
-            "Takibi KaldÄ±r",
-            f"Rev-{rev.revizyon_kodu} iÃ§in takip iÅŸaretini kaldÄ±rmak istiyor musunuz?",
+            "Takibi Kald\u0131r",
+            f"Rev-{rev.revizyon_kodu} i\u00e7in takip i\u015faretini kald\u0131rmak istiyor musunuz?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -3605,7 +3706,7 @@ class AnaPencere(QMainWindow):
             self._refresh_current_project(keep_rev_id=rev.id)
         except Exception:
             self.revizyonlari_yukle(self.secili_proje_id)
-        QMessageBox.information(self, "BaÅŸarÄ±lÄ±", "Revizyon takipten Ã§Ä±karÄ±ldÄ±.")
+        QMessageBox.information(self, "Ba\u015far\u0131l\u0131", "Revizyon takipten \u00e7\u0131kar\u0131ld\u0131.")
 
     def takip_listesini_excele_aktar(self):
         """Export revision tracking list to Excel."""
@@ -4126,8 +4227,7 @@ class AnaPencere(QMainWindow):
             self.projeleri_yukle()
 
             # Pencere baÅŸlÄ±ÄŸÄ±nÄ± gÃ¼ncelle
-            db_name = os.path.basename(self.current_db_file)
-            self.setWindowTitle(f"{APP_NAME} - {APP_VERSION} - [{db_name}]")
+            self._update_window_title()
 
             # Son kullanÄ±lan dosyayÄ± kaydet
             self._son_kullanilan_dosya_kaydet()
@@ -5151,30 +5251,37 @@ class AnaPencere(QMainWindow):
             )
             tse_gonderilmeyen = toplam - tse_gonderilen
 
-            # Etiketleri gÃ¼ncelle - yeni label isimleriyle
-            if "Toplam GÃ¶rÃ¼ntÃ¼lenen Proje:" in self.istatistik_etiketleri:
-                self.istatistik_etiketleri["Toplam GÃ¶rÃ¼ntÃ¼lenen Proje:"].setText(
-                    str(toplam)
-                )
-            if "OnaylÄ±:" in self.istatistik_etiketleri:
-                self.istatistik_etiketleri["OnaylÄ±:"].setText(str(onayli))
-            if "Notlu OnaylÄ±:" in self.istatistik_etiketleri:
-                self.istatistik_etiketleri["Notlu OnaylÄ±:"].setText(str(notlu))
-            if "Reddedilen:" in self.istatistik_etiketleri:
-                self.istatistik_etiketleri["Reddedilen:"].setText(str(red))
-            if "Beklemede (OnaysÄ±z):" in self.istatistik_etiketleri:
-                self.istatistik_etiketleri["Beklemede (OnaysÄ±z):"].setText(
-                    str(bekleyen)
-                )
+            # Etiketleri güncelle - hem doğru UTF-8 hem eski bozuk anahtarlarla uyumlu kal.
+            def _set_stat_value(value: int, *keys: str) -> None:
+                for key in keys:
+                    label = self.istatistik_etiketleri.get(key)
+                    if label is not None:
+                        label.setText(str(value))
+                        return
 
-            if "TSE'ye GÃ¶nderilen:" in self.istatistik_etiketleri:
-                self.istatistik_etiketleri["TSE'ye GÃ¶nderilen:"].setText(
-                    str(tse_gonderilen)
-                )
-            if "HenÃ¼z GÃ¶nderilmeyen:" in self.istatistik_etiketleri:
-                self.istatistik_etiketleri["HenÃ¼z GÃ¶nderilmeyen:"].setText(
-                    str(tse_gonderilmeyen)
-                )
+            _set_stat_value(
+                toplam,
+                "Toplam G\u00f6r\u00fcnt\u00fclenen Proje:",
+                "Toplam GÃ¶rÃ¼ntÃ¼lenen Proje:",
+            )
+            _set_stat_value(onayli, "Onayl\u0131:", "OnaylÄ±:")
+            _set_stat_value(notlu, "Notlu Onayl\u0131:", "Notlu OnaylÄ±:")
+            _set_stat_value(red, "Reddedilen:")
+            _set_stat_value(
+                bekleyen,
+                "Beklemede (Onays\u0131z):",
+                "Beklemede (OnaysÄ±z):",
+            )
+            _set_stat_value(
+                tse_gonderilen,
+                "TSE'ye G\u00f6nderilen:",
+                "TSE'ye GÃ¶nderilen:",
+            )
+            _set_stat_value(
+                tse_gonderilmeyen,
+                "Hen\u00fcz G\u00f6nderilmeyen:",
+                "HenÃ¼z GÃ¶nderilmeyen:",
+            )
 
             # TÃ¼r DaÄŸÄ±lÄ±mÄ±: per-type status breakdown
             try:
@@ -5461,4 +5568,3 @@ if __name__ == "__main__":
     window = AnaPencere()
     window.show()
     sys.exit(app.exec())
-

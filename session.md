@@ -1,17 +1,17 @@
 # Session Guide
 
-Bu dosya, oturum başlangıcı, çalışma sırasında bağlam yönetimi ve oturum kapanışı için kullanılır.
-Uzun veya bölünebilir görevlerde burası handoff kaydı gibi düşünülmelidir.
+This file is used for session startup, context management during execution, and handoff notes at the end of a session.
+For long-running or interruptible tasks, treat it like a lightweight handoff log.
 
 ## Session Start Checklist
 
-- `skill.md` oku
-- `agents.md` oku
-- `architecture.md` içinden görevle ilgili modülleri tara
-- `test.md` içinden uygun doğrulama adımlarını seç
-- `review.md` içinden risk checklistini hatırla
-- `tasks/lessons.md` içinde benzer hata veya uyarı var mı bak
-- Aktif görevi `tasks/todo.md` içine yaz
+- Read `skill.md`
+- Read `agents.md`
+- Scan the task-relevant modules in `architecture.md`
+- Choose the suitable verification steps from `test.md`
+- Revisit the risk checklist in `review.md`
+- Check `tasks/lessons.md` for similar mistakes or warnings
+- Write the active task into `tasks/todo.md`
 
 ## Investigation Notes Template
 
@@ -25,10 +25,10 @@ Uzun veya bölünebilir görevlerde burası handoff kaydı gibi düşünülmelid
 
 ## Session Execution Rules
 
-- İlk 10-15 dakikada koda dalmadan önce harita çıkar
-- Büyük dosyalarda önce giriş noktalarını, sınıfları ve bağımlılıkları tara
-- Kullanıcının bıraktığı yerel değişiklikleri bozma
-- Bir şey beklenmedik şekilde davranıyorsa log, traceback, build output veya git diff ile doğrula
+- Spend the first 10-15 minutes mapping the code before diving in
+- In large files, inspect entry points, classes, and dependencies first
+- Do not overwrite the user's local changes
+- If something behaves unexpectedly, verify with logs, tracebacks, build output, or `git diff`
 
 ## Handoff Template
 
@@ -42,15 +42,15 @@ Uzun veya bölünebilir görevlerde burası handoff kaydı gibi düşünülmelid
 
 ## Current Session Notes
 
-- Date: 2026-03-25
-- Goal: Continue stabilization work using the markdown workflow files as the primary operating guide.
-- Related files: `main_window.py`, `README.md`, `rapor.py`, `tasks/todo.md`, `todo.md`
-- Constraints: Keep surface area small, avoid destabilizing `main_window.py`, prefer delegation to existing helper methods rather than broad rewrites.
-- Risks: `main_window.py` contains duplicate legacy methods; changing the wrong one can create regressions or confusion.
-- Assumptions: The final method definitions in `AnaPencere` are the runtime-effective implementations and should remain the canonical behavior.
-- Verification plan: Update planning docs, clean one low-risk legacy block, run `py_compile`, then run a short application smoke test.
-- Last completed step: Removed the duplicate final preview/document-open method block from `main_window.py` after aligning the earlier canonical methods to the shared helper path.
-- Current status: `v2.0.2` kaynak kodu origin `main` dalına push edildi, `v2.0.2` tag'i gönderildi, GitHub Release oluşturuldu ve ZIP/checksum asset'leri yüklendi. `update.md` repo içi update sözleşmesini dokümante ediyor.
-- Verified: Kaynak push (`main`), tag push (`v2.0.2`), GitHub Release oluşturma, `ProjeTakip-v2.0.2-windows-x64.zip` ve `SHA256SUMS` asset yükleme, mevcut updater config'inin aynı repo (`karkajinho/Proje_Takip`) için ayarlı olması.
-- Open risks: Paketli `.exe` içinde `Dokümanı Görüntüle` butonunun gerçek tıklama akışı hâlâ manuel teyit ister; ayrıca uygulama içi updater sadece release akışını doğrular, kullanıcı etkileşimini otomatik test etmez.
-- Recommended next step: GitHub Release üstünden indirilen `v2.0.2` paketiyle gerçek kullanıcı senaryosunda manuel update ve doküman açma testi yap.
+- Date: 2026-03-31
+- Goal: Deeply analyze the current `v2.1.5` project state and fix the reported dashboard counters, missing tracking-note buttons, and visible Turkish mojibake in the touched revision flows.
+- Related files: `main_window.py`, `ui/panels/revision_panel.py`, `ui/main_window_ui.py`, `tasks/todo.md`, `todo.md`
+- Constraints: Keep the edit surface focused; avoid broad text rewrites across all of `main_window.py` in one pass because the file still mixes legacy behavior and encoding damage.
+- Risks: The project still contains many mojibake strings outside the touched paths, so a full-file cleanup would be higher risk than the targeted fixes requested in this turn.
+- Assumptions: The active revision UI is produced by `AnaPencere._setup_revizyonlar_panel()` plus `ui/panels/revision_panel.py`, while the dashboard labels come from `ui/main_window_ui.py`.
+- Verification plan: Run `py_compile`, then an offscreen Qt verification for revision-panel button presence and dashboard statistic updates.
+- Last completed step: Restored the revision tracking quick-action buttons, reconnected them inside `AnaPencere`, and fixed the dashboard label update path to support the live UTF-8 labels.
+- Current status: The requested user-visible fixes are implemented and targeted verification passed.
+- Verified: `python -m py_compile main_window.py ui/panels/revision_panel.py`; offscreen verification for `RevisionPanel` tracking buttons; offscreen verification that `guncelle_gosterge_panelini()` updates `Toplam Görüntülenen Proje` and `Beklemede (Onaysız)` correctly.
+- Open risks: `main_window.py` still has broader mojibake debt in update dialogs, confirmations, and several older messages that were not globally rewritten in this pass.
+- Recommended next step: Continue with a staged mojibake cleanup backlog item for high-visibility dialogs in `main_window.py`, validating each slice with the same targeted offscreen checks.

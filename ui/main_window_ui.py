@@ -27,6 +27,7 @@ from config import (
     PANEL_WATERMARK_OPACITY,
     PANEL_WATERMARK_SCALE,
 )
+from i18n import get_current_language
 
 
 def setup_ui(self):
@@ -761,6 +762,36 @@ def _setup_menubar(self):
         self.tok_theme_action_group = theme_group
         try:
             self._refresh_tok_theme_actions()
+        except Exception:
+            pass
+        language_menu = gorunum_menu.addMenu(
+            QIcon.fromTheme("preferences-desktop-locale"),
+            "Dil",
+        )
+        language_group = QActionGroup(self)
+        language_group.setExclusive(True)
+        self.language_actions = {}
+        for language_code, label in (("tr", "Türkçe"), ("en", "English")):
+            action = QAction(label, self)
+            action.setCheckable(True)
+
+            def _apply_language(checked, lang=language_code):
+                if checked:
+                    try:
+                        self.set_app_language(lang)
+                    except Exception:
+                        pass
+
+            action.triggered.connect(_apply_language)
+            language_group.addAction(action)
+            language_menu.addAction(action)
+            self.language_actions[language_code] = action
+
+        self.language_action_group = language_group
+        try:
+            active_language = get_current_language()
+            if active_language in self.language_actions:
+                self.language_actions[active_language].setChecked(True)
         except Exception:
             pass
         # Add a reset layout action

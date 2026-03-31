@@ -4,10 +4,10 @@ Bu dosya, Proje Takip Sistemi için GitHub tabanlı güncelleme akışını tek 
 
 ## Source Of Truth
 
-- Kod deposu: `https://github.com/karkajinho/Proje_Takip`
+- Kod deposu: `https://github.com/SLedgehammer-dev12/Proje_Takip`
 - Uygulama içi update kontrolü: GitHub Releases
 - Config anahtarları: `config.py`
-  - `UPDATE_REPO_OWNER = "karkajinho"`
+  - `UPDATE_REPO_OWNER = "SLedgehammer-dev12"`
   - `UPDATE_REPO_NAME = "Proje_Takip"`
   - `UPDATE_RELEASE_ASSET_PATTERN = r"ProjeTakip-.*\.(msi|exe|zip)$"`
 
@@ -35,12 +35,11 @@ Uygulama update kontrolünde:
 - Yeni sürüm varsa kullanıcıya release notlarını gösterir
 - Asset dosyasını `Downloads` klasörüne indirir
 
-## Current v2.0.2 Notes
+## Current v2.1.6 Notes
 
-- Windows paketli belge açma yolu güçlendirildi
-- Preview/document-open akışı daha küçük katmanlara ayrıldı
-- `ReportService` içinde `pandas` lazy-load edildi
-- `DejaVuSans.ttf` gerçek font dosyasıyla değiştirildi
+- Kalıcı Türkçe/İngilizce dil seçimi eklendi
+- Merkezi i18n katmanı ile mojibake görünen metinler toparlandı
+- `v2.1.5` istemcilerinin yeni release paketini görebileceği updater sözleşmesi korundu
 
 ## Operational Reminder
 
