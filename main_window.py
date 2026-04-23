@@ -2951,6 +2951,37 @@ class AnaPencere(QMainWindow):
                 "Revizyona ait yazı ön izlemesi burada görünür."
             )
 
+    def _clear_revision_preview_only(
+        self,
+        message: Optional[str] = None,
+        *,
+        revision: Optional[RevizyonModel] = None,
+    ) -> None:
+        """Reset only the upper revision preview without touching the letter preview panel."""
+        try:
+            self.preview_timer.stop()
+        except Exception:
+            pass
+
+        if self.preview_state:
+            if message:
+                self.preview_state.show_status(
+                    message,
+                    revision=revision,
+                    payload=revision,
+                    clear_visual=True,
+                )
+            else:
+                self.preview_state.clear()
+            return
+
+        self.onizleme_etiketi.clear()
+        set_widget_text(
+            self.onizleme_etiketi,
+            message or "Bir revizyon seçerek dokümanı ön izleyin.",
+        )
+        self.goruntule_btn.setEnabled(False)
+
     def _refresh_current_project(self, keep_rev_id: Optional[int] = None):
         """Reload the revisions for the current project and reselect a revision if given.
 
@@ -3404,19 +3435,13 @@ class AnaPencere(QMainWindow):
                 return
 
             rev_id = secili_revizyon.id
+            self._queue_letter_preview_for_revision(secili_revizyon)
             load_result = render_service.prepare_revision_preview(secili_revizyon)
             if load_result.status != "ready":
-                self._clear_preview()
-                if load_result.message:
-                    if self.preview_state:
-                        self.preview_state.show_status(
-                            load_result.message,
-                            revision=secili_revizyon,
-                            payload=secili_revizyon,
-                            clear_visual=True,
-                        )
-                    else:
-                        set_widget_text(self.onizleme_etiketi, load_result.message)
+                self._clear_revision_preview_only(
+                    load_result.message,
+                    revision=secili_revizyon,
+                )
                 return
 
             dokuman_verisi = load_result.document_bytes
@@ -3444,7 +3469,6 @@ class AnaPencere(QMainWindow):
                 self.goruntule_btn.setEnabled(False)
 
             self._start_pdf_render.emit(dokuman_verisi, self.zoom_factor, rev_id)
-            self._queue_letter_preview_for_revision(secili_revizyon)
 
         except Exception as e:
             self.logger.error(f"Preview update error: {e}", exc_info=True)
@@ -6162,6 +6186,5 @@ if __name__ == "__main__":
     window = AnaPencere()
     window.show()
     sys.exit(app.exec())
-
 
 

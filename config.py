@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v3.0"
+APP_VERSION = "v3.0.1"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,12 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v3.0.1": [
+        "ONIZLEME: Revizyon dokumani yuklu olmasa bile, revizyona bagli yazi dokumani varsa alt panelde yazi on izlemesi artik calisiyor.",
+        "DUZELTME: Revizyon preview hatasi uzerinden tum preview state'ini sifirlayan akis ayrildi; ust revizyon on izlemesi ile alt yazi on izlemesi birbirini kilitlemiyor.",
+        "DOGRULAMA: MainWindow preview orkestrasyonu icin regression testi eklendi; yazi dokumani olan ancak proje/revizyon dokumani olmayan satirlar hedefli olarak test ediliyor.",
+        "ENTEGRASYON: release/v3.0 hatti main ile guvenli fast-forward birlesim akisina alinarak yeni patch surum uretildi.",
+    ],
     "v3.0": [
         "METIN: Legacy kaynak dosyalardaki mojibake metinler kaynaginda temizlendi; kritik dialog ve ana pencere akislari artik gercek UTF-8 Turkce karakterlerle geliyor.",
         "KALITE: Kaynak repoya .editorconfig, git eol kurallari ve UTF-8 terminal yardimcilari eklendi; gelistirme ortaminda yeni encoding bozulmalarinin tekrar repo'ya sizmasi zorlastirildi.",

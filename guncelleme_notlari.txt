@@ -1,5 +1,10 @@
 ﻿PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.0.1 ---
+  * ONIZLEME: Revizyon dokumani yuklu olmasa bile, revizyona bagli yazi dokumani varsa alt panelde yazi on izlemesi artik calisiyor.
+  * DUZELTME: Revizyon preview hatasi tum preview state'ini sifirlamiyor; ust revizyon on izlemesi ile alt yazi on izlemesi birbirinden ayrildi.
+  * DOGRULAMA: MainWindow preview orkestrasyonu icin regression testi eklendi; yazi dokumani olan ancak proje/revizyon dokumani olmayan satirlar hedefli olarak test ediliyor.
+  * ENTEGRASYON: release/v3.0 hatti main ile guvenli fast-forward birlesim akisina alinarak patch surum uretildi.
 --- Sürüm: v3.0 ---
   * METIN: Legacy kaynak dosyalardaki mojibake metinler kaynaginda temizlendi; kritik dialog ve ana pencere akislarinda gercek UTF-8 Turkce karakterlere gecildi.
   * KALITE: Repo seviyesinde UTF-8 editor, terminal ve satir sonu kurallari eklendi; yeni karakter bozulmalarinin tekrar kaynaga sizmasi zorlastirildi.
