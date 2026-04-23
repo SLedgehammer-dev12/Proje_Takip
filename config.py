@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v3.0.1"
+APP_VERSION = "v3.0.2"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,12 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v3.0.2": [
+        "EXCEL: Backup klasoru altindan acilan veritabani baglaminda proje_listesi.xlsx ust dizin fallback'i ile bulunuyor; yanlis klasor uyarilari azaltildi.",
+        "LOG: Excel dosyasi eksikse sonuc artik cache'leniyor; ayni eksik dosya icin tekrar tekrar warning basilmiyor.",
+        "ASYNC: Proje yukleme watchdog'i, arka plan thread sadece 2 saniye esigini astiysa warning yerine info yaziyor; gercek bos/hata durumlari warning olarak korunuyor.",
+        "DOGRULAMA: Excel loader fallback ve proje yukleme watchdog log seviyesi icin hedefli regression testleri eklendi.",
+    ],
     "v3.0.1": [
         "ONIZLEME: Revizyon dokumani yuklu olmasa bile, revizyona bagli yazi dokumani varsa alt panelde yazi on izlemesi artik calisiyor.",
         "DUZELTME: Revizyon preview hatasi uzerinden tum preview state'ini sifirlayan akis ayrildi; ust revizyon on izlemesi ile alt yazi on izlemesi birbirini kilitlemiyor.",

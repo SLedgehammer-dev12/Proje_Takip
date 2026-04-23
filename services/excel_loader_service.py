@@ -25,6 +25,29 @@ class ExcelLoaderService:
         self.excel_path = excel_path
         self._data_cache: Optional[Dict[str, Tuple[str, str]]] = None
         self._load_error: Optional[str] = None
+
+    def _resolve_excel_path(self) -> Path:
+        """Resolve the configured Excel path, probing ancestor directories if needed."""
+        configured = Path(self.excel_path).expanduser()
+        if not configured.is_absolute():
+            configured = Path.cwd() / configured
+
+        configured = configured.resolve(strict=False)
+        if configured.exists():
+            return configured
+
+        filename = configured.name or "proje_listesi.xlsx"
+        for parent in configured.parent.parents:
+            candidate = parent / filename
+            if candidate.exists():
+                self.logger.info(
+                    "Excel dosyası üst dizin fallback ile bulundu: %s -> %s",
+                    configured,
+                    candidate,
+                )
+                return candidate
+
+        return configured
         
     def _load_excel_data(self) -> Dict[str, Tuple[str, str]]:
         """Load Excel data and cache it.
@@ -38,9 +61,13 @@ class ExcelLoaderService:
         data = {}
         
         try:
+            resolved_excel_path = self._resolve_excel_path()
+            self.excel_path = str(resolved_excel_path)
+
             # Check if file exists
-            if not os.path.exists(self.excel_path):
-                self._load_error = f"Excel dosyası bulunamadı: {self.excel_path}"
+            if not resolved_excel_path.exists():
+                self._load_error = f"Excel dosyası bulunamadı: {resolved_excel_path}"
+                self._data_cache = data
                 self.logger.warning(self._load_error)
                 return data
             
@@ -48,7 +75,9 @@ class ExcelLoaderService:
             try:
                 import openpyxl
                 
-                wb = openpyxl.load_workbook(self.excel_path, read_only=True, data_only=True)
+                wb = openpyxl.load_workbook(
+                    resolved_excel_path, read_only=True, data_only=True
+                )
                 ws = wb.active
                 
                 # Read rows starting from row 2 (skip header row 1)
@@ -87,7 +116,7 @@ class ExcelLoaderService:
                 self.logger.debug("openpyxl bulunamadı, pandas kullanılıyor")
                 import pandas as pd
                 
-                df = pd.read_excel(self.excel_path)
+                df = pd.read_excel(resolved_excel_path)
                 
                 # Assuming columns are: Unnamed:0, Unnamed:1 (index), Unnamed:2 (tür), Unnamed:3 (kod), Unnamed:4 (isim)
                 for idx, row in df.iterrows():

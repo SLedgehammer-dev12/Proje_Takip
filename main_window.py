@@ -1036,7 +1036,15 @@ class AnaPencere(QMainWindow):
         try:
             if getattr(self, "tum_projeler", None):
                 return  # zaten dolu
-            self.logger.warning("Projeler async yüklenemedi veya boş; senkron fallback çalışıyor.")
+            thread = self._project_load_threads.get(token)
+            if thread is not None and thread.isRunning():
+                self.logger.info(
+                    "Projeler async yükleme süresi aştı; senkron fallback çalışıyor."
+                )
+            else:
+                self.logger.warning(
+                    "Projeler async yüklenemedi veya boş; senkron fallback çalışıyor."
+                )
             projects = self.db.projeleri_listele()
             self._on_projects_loaded(token, projects)
         except Exception as e:
@@ -6186,5 +6194,4 @@ if __name__ == "__main__":
     window = AnaPencere()
     window.show()
     sys.exit(app.exec())
-
 

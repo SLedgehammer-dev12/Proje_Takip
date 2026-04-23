@@ -1,5 +1,10 @@
 ﻿PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.0.2 ---
+  * EXCEL: Backup klasoru altindan acilan veritabani baglaminda proje_listesi.xlsx ust dizin fallback'i ile bulunuyor; yanlis klasor uyarilari azaltildi.
+  * LOG: Excel dosyasi eksikse sonuc artik cache'leniyor; ayni eksik dosya icin tekrar tekrar warning basilmiyor.
+  * ASYNC: Proje yukleme watchdog'i, arka plan thread sadece 2 saniye esigini astiysa warning yerine info yaziyor; gercek bos/hata durumlari warning olarak korunuyor.
+  * DOGRULAMA: Excel loader fallback ve proje yukleme watchdog log seviyesi icin hedefli regression testleri eklendi.
 --- Sürüm: v3.0.1 ---
   * ONIZLEME: Revizyon dokumani yuklu olmasa bile, revizyona bagli yazi dokumani varsa alt panelde yazi on izlemesi artik calisiyor.
   * DUZELTME: Revizyon preview hatasi tum preview state'ini sifirlamiyor; ust revizyon on izlemesi ile alt yazi on izlemesi birbirinden ayrildi.
@@ -312,5 +317,4 @@
 
 --- Sürüm: v9.0 ---
   * İlk ana sürüm.
-
 
