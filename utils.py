@@ -1,10 +1,14 @@
 # utils.py
+import atexit
 import sys
 import os
 import re
 import logging
+import queue
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from PySide6.QtGui import QPalette
-from app_paths import get_resource_path
+from app_paths import get_user_data_path
+from runtime_prefs import is_performance_mode_enabled
 
 # Modüllerimizden gerekli tanımları içe aktar
 from config import APP_NAME, CHANGELOG, CHANGELOG_FILE
@@ -14,10 +18,67 @@ from config import APP_NAME, CHANGELOG, CHANGELOG_FILE
 # =============================================================================
 
 
-def setup_logging():
+_LOG_LISTENER: QueueListener | None = None
+_LOG_QUEUE_HANDLER: QueueHandler | None = None
+_LOG_FILE_HANDLER: RotatingFileHandler | None = None
+_LOG_STREAM_HANDLER: logging.StreamHandler | None = None
+
+
+def _shutdown_logging_listener():
+    global _LOG_LISTENER
+    listener = _LOG_LISTENER
+    if listener is None:
+        return
+    try:
+        listener.stop()
+    except Exception:
+        pass
+    _LOG_LISTENER = None
+
+
+def _get_logging_level(*, performance_mode: bool | None = None) -> int:
+    if performance_mode is None:
+        performance_mode = is_performance_mode_enabled()
+    if performance_mode:
+        return logging.ERROR
+    return (
+        logging.DEBUG
+        if os.environ.get("PT_DEBUG", "0").lower() in ("1", "true", "yes")
+        else logging.INFO
+    )
+
+
+def _apply_runtime_log_level(level: int):
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    for handler in list(root_logger.handlers):
+        try:
+            handler.setLevel(level)
+        except Exception:
+            pass
+
+    for handler in (_LOG_QUEUE_HANDLER, _LOG_FILE_HANDLER, _LOG_STREAM_HANDLER):
+        if handler is None:
+            continue
+        try:
+            handler.setLevel(level)
+        except Exception:
+            pass
+
+    listener = _LOG_LISTENER
+    if listener is not None:
+        for handler in getattr(listener, "handlers", ()):
+            try:
+                handler.setLevel(level)
+            except Exception:
+                pass
+
+
+def setup_logging(performance_mode: bool | None = None):
+    global _LOG_LISTENER, _LOG_QUEUE_HANDLER, _LOG_FILE_HANDLER, _LOG_STREAM_HANDLER
     # Allow enabling debug logging by setting the environment variable PT_DEBUG=1
-    level = logging.DEBUG if os.environ.get("PT_DEBUG", "0").lower() in ("1", "true", "yes") else logging.INFO
-    log_path = get_resource_path("proje_takip.log")
+    level = _get_logging_level(performance_mode=performance_mode)
+    log_path = get_user_data_path("proje_takip.log", create_parent=True)
     # Ensure logfile is created with UTF-8 BOM for compatibility with Windows Notepad
     # if opening the file without specifying encoding results in replacement characters.
     if not os.path.exists(log_path):
@@ -25,14 +86,62 @@ def setup_logging():
         with open(log_path, "w", encoding="utf-8-sig"):
             pass
 
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_path, encoding="utf-8-sig"),
-            logging.StreamHandler(),
-        ],
+    root_logger = logging.getLogger()
+    if getattr(root_logger, "_proje_takip_logging_ready", False):
+        _apply_runtime_log_level(level)
+        return
+
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    file_handler = RotatingFileHandler(
+        log_path,
+        maxBytes=4 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8-sig",
+    )
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(level)
+    stream_handler.setFormatter(formatter)
+
+    log_queue: queue.SimpleQueue = queue.SimpleQueue()
+    queue_handler = QueueHandler(log_queue)
+    queue_handler.setLevel(level)
+    _LOG_QUEUE_HANDLER = queue_handler
+    _LOG_FILE_HANDLER = file_handler
+    _LOG_STREAM_HANDLER = stream_handler
+
+    _shutdown_logging_listener()
+    _LOG_LISTENER = QueueListener(
+        log_queue,
+        file_handler,
+        stream_handler,
+        respect_handler_level=True,
+    )
+    _LOG_LISTENER.start()
+
+    root_logger.setLevel(level)
+    root_logger.addHandler(queue_handler)
+    root_logger._proje_takip_logging_ready = True
+    atexit.register(_shutdown_logging_listener)
+
+
+def set_runtime_logging_mode(performance_mode: bool):
+    root_logger = logging.getLogger()
+    if not getattr(root_logger, "_proje_takip_logging_ready", False):
+        setup_logging(performance_mode=performance_mode)
+        return
+    _apply_runtime_log_level(_get_logging_level(performance_mode=performance_mode))
 
 
 def get_class_logger(owner) -> logging.Logger:
@@ -49,7 +158,7 @@ def get_class_logger(owner) -> logging.Logger:
 def write_changelog_file():
     """Uygulamanın bulunduğu dizine bir güncelleme geçmişi dosyası yazar."""
     try:
-        filepath = get_resource_path(CHANGELOG_FILE)
+        filepath = get_user_data_path(CHANGELOG_FILE, create_parent=True)
 
         with open(filepath, "w", encoding="utf-8") as f:
             # HATA DÜZELTMESİ: .UPPER() -> .upper() olarak değiştirildi.

@@ -1,5 +1,32 @@
-PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
+﻿PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v2.1.9.2 ---
+  * DAGITIM: Paketli surum artik log, guncelleme notu, varsayilan veritabani ve yedekleri kullanici profili altinda sakliyor; korumali klasorden calisma nedeniyle yonetici ihtiyaci doguran acilis hatasi giderildi.
+  * GECIS: Eski portable dagitimdaki projeler.db ilk acilista kullanici profiline kopyalanarak veri kaybi olmadan yeni dizin yapisina alinabiliyor.
+  * UYUMLULUK: Yardim kilavuzu bundle icinden okunuyor, log paneli ve crash raporlari yazilabilir kullanici klasorune yonlendiriliyor.
+  * DAGITIM KALITESI: Imzasiz one-file EXE dagitiminda false-positive riskinin tamamen kaldirilamadigi not edilerek patch release akisina yansitildi.
+--- Sürüm: v2.1.9.1 ---
+  * STABILITE: Cok kullanicili writer lease akisi gecici ag hatalarinda hemen write dusurmeyecek sekilde esikli hale getirildi; kisa heartbeat sapmalari tolere ediliyor.
+  * GUVENLIK: Basarisiz giris veya yarim kalan auth akisi sonrasinda writer lock ve session kaydi temizleniyor; hayalet yazma oturumu riski kapatildi.
+  * UYUMLULUK: Eski veritabani yedeginden geri yukleme sonrasinda OCR metadata kolonlari ve yazi dokumani migrationlari tekrar uygulanarak legacy DB acilis akisi guclendirildi.
+  * OCR: PDF/metin/OCR fallback hattinin hata yollari tekrar test edildi; Tesseract backend ve belge zeka servisi regression paketiyle birlikte dogrulandi.
+
+--- Sürüm: v2.1.9 ---
+  * GUNCELLEME: GitHub release akisi v2.1.9 icin tekil ve uyumlu hale getirildi; hem kanonik one-file EXE hem de eski istemciler icin ayni isim semasinda ZIP asset yayinlaniyor.
+  * SURUMLEME: Updater surum karsilastirmasi karisik uzunluktaki etiketleri (ornegin v2.1.8.5 -> v2.1.9 veya v2.1.9.0) daha dayanikli sekilde normalize ediyor.
+  * DAGITIM: Release dosya isimlendirmesi Windows mimarisi ile tutarli hale getirildi; checksum sozlesmesi birden fazla asset icin de kanonik olarak uretiliyor.
+  * PERFORMANS: Bir onceki surumde eklenen Performans Modu, manuel yazi on izleme ve dusuk RAM profili bu surumde de korunarak dagitim kanalina tasindi.
+
+--- Sürüm: v2.1.8.5 ---
+  * PERFORMANS MODU: Gorunum menusu altina kalici Performans Modu eklendi; dusuk donanimli bilgisayarlarda native/Fusion gorunum, daha dusuk onizleme yukleri ve daha seyrek bellek guncellemesi ile daha hafif calisiyor.
+  * ONIZLEME: Yazi on izleme artik performans modunda otomatik render edilmiyor; manuel yukleme dugmesi ile ihtiyac halinde acilarak RAM ve CPU kullanimi azaltildi.
+  * LOG: Performans modunda canli log izleme kapatiliyor ve kayit seviyesi ERROR/CRITICAL'a dusuruluyor; teshis kabiliyeti korunurken disk ve islem yuku azaltiliyor.
+  * BELLEK: PDF render worker ve preview belge cache limitleri dusuruldu; buyuk onizleme boyutlari kisilarak zayif makinelerde daha dengeli calisma saglandi.
+
+--- Sürüm: v2.1.8.4 ---
+  * ARAYUZ: Proje dokumani on izleme ve yazi on izleme alanlari varsayilan yerlesimde daha dengeli hale getirildi; iki tam ekran ac butonu ayni hizada toplandi.
+  * VERI BUTUNLUGU: Coklu proje yuklemede Kategorisiz sentinel degerinin foreign key hatasi üretmesi engellendi; gecersiz kategori kimlikleri guvenli sekilde NULL'a normalize ediliyor.
+  * LOG/PERFORMANS: Log yazimi kuyruklu arka plan isleyicisine tasindi; canli log UI'si yalnizca log sekmesi etkinken baglanarak ana akis yuku azaltildi.
 
 --- Sürüm: v2.1.6 ---
   * ARAYUZ: Uygulamaya kalici Turkce/Ingilizce dil secimi eklendi; ana menu, paneller ve kritik dialoglar secilen dile gore guncelleniyor.
@@ -275,4 +302,5 @@ PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 
 --- Sürüm: v9.0 ---
   * İlk ana sürüm.
+
 

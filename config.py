@@ -3,7 +3,7 @@ import sys
 import os
 import logging
 from PySide6.QtGui import QColor
-from app_paths import get_app_base_dir, get_resource_path, get_internal_path
+from app_paths import get_app_base_dir, get_internal_path, get_user_data_path
 from project_types import (
     PROJECT_TYPE_FILTER_OPTIONS,
     PROJECT_TYPE_OPTIONS,
@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v2.1.6"
+APP_VERSION = "v2.1.9.2"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,35 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v2.1.9.2": [
+        "DAGITIM: Paketli surum artik log, guncelleme notu, varsayilan veritabani ve yedekleri kullanici profili altinda sakliyor; korumali klasorden calisma nedeniyle yonetici ihtiyaci doguran acilis hatasi giderildi.",
+        "GECIS: Eski portable dagitimdaki projeler.db ilk acilista kullanici profiline kopyalanarak veri kaybi olmadan yeni dizin yapisina alinabiliyor.",
+        "UYUMLULUK: Yardim kilavuzu bundle icinden okunuyor, log paneli ve crash raporlari yazilabilir kullanici klasorune yonlendiriliyor.",
+        "DAGITIM KALITESI: Imzasiz one-file EXE dagitiminda false-positive riskinin tamamen kaldirilamadigi not edilerek patch release akisina yansitildi.",
+    ],
+    "v2.1.9.1": [
+        "STABILITE: Cok kullanicili writer lease akisi gecici ag hatalarinda hemen write dusurmeyecek sekilde esikli hale getirildi; kisa heartbeat sapmalari tolere ediliyor.",
+        "GUVENLIK: Basarisiz giris veya yarim kalan auth akisi sonrasinda writer lock ve session kaydi temizleniyor; hayalet yazma oturumu riski kapatildi.",
+        "UYUMLULUK: Eski veritabani yedeginden geri yukleme sonrasinda OCR metadata kolonlari ve yazi dokumani migrationlari tekrar uygulanarak legacy DB acilis akisi guclendirildi.",
+        "OCR: PDF/metin/OCR fallback hattinin hata yollari tekrar test edildi; Tesseract backend ve belge zeka servisi regression paketiyle birlikte dogrulandi.",
+    ],
+    "v2.1.9": [
+        "GUNCELLEME: GitHub release akisi v2.1.9 icin tekil ve uyumlu hale getirildi; hem kanonik one-file EXE hem de eski istemciler icin ayni isim semasinda ZIP asset yayinlaniyor.",
+        "SURUMLEME: Updater surum karsilastirmasi karisik uzunluktaki etiketleri (ornegin v2.1.8.5 -> v2.1.9 veya v2.1.9.0) daha dayanikli sekilde normalize ediyor.",
+        "DAGITIM: Release dosya isimlendirmesi Windows mimarisi ile tutarli hale getirildi; checksum sozlesmesi birden fazla asset icin de kanonik olarak uretiliyor.",
+        "PERFORMANS: Bir onceki surumde eklenen Performans Modu, manuel yazi on izleme ve dusuk RAM profili bu surumde de korunarak dagitim kanalina tasindi.",
+    ],
+    "v2.1.8.5": [
+        "PERFORMANS MODU: Gorunum menusu altina kalici Performans Modu eklendi; dusuk donanimli bilgisayarlarda native/Fusion gorunum, daha dusuk onizleme yukleri ve daha seyrek bellek guncellemesi ile daha hafif calisiyor.",
+        "ONIZLEME: Yazi on izleme artik performans modunda otomatik render edilmiyor; manuel yukleme dugmesi ile ihtiyac halinde acilarak RAM ve CPU kullanimi azaltildi.",
+        "LOG: Performans modunda canli log izleme kapatiliyor ve kayit seviyesi ERROR/CRITICAL'a dusuruluyor; teshis kabiliyeti korunurken disk ve islem yuku azaltiliyor.",
+        "BELLEK: PDF render worker ve preview belge cache limitleri dusuruldu; buyuk onizleme boyutlari kisilarak zayif makinelerde daha dengeli calisma saglandi.",
+    ],
+    "v2.1.8.4": [
+        "ARAYUZ: Proje dokumani on izleme ve yazi on izleme alanlari varsayilan yerlesimde daha dengeli hale getirildi; iki tam ekran ac butonu ayni hizada toplandi.",
+        "VERI BUTUNLUGU: Coklu proje yuklemede Kategorisiz sentinel degerinin foreign key hatasi üretmesi engellendi; gecersiz kategori kimlikleri guvenli sekilde NULL'a normalize ediliyor.",
+        "LOG/PERFORMANS: Log yazimi kuyruklu arka plan isleyicisine tasindi; canli log UI'si yalnizca log sekmesi etkinken baglanarak ana akis yuku azaltildi.",
+    ],
     "v2.1.6": [
         "ARAYUZ: Uygulamaya kalici Turkce/Ingilizce dil secimi eklendi; ana menu, paneller ve kritik dialoglar secilen dile gore guncelleniyor.",
         "METIN: Eski kodlama bozulmalarini onaran merkezi i18n katmani eklendi; gorunur mojibake metinlerin buyuk kismi duzeltildi.",
@@ -340,7 +369,7 @@ DURUM_RENKLERI = {
 def write_changelog_file():
     """Uygulamanın bulunduğu dizine bir güncelleme geçmişi dosyası yazar."""
     try:
-        filepath = get_resource_path(CHANGELOG_FILE)
+        filepath = get_user_data_path(CHANGELOG_FILE, create_parent=True)
 
         with open(filepath, "w", encoding="utf-8") as f:
             # HATA DÜZELTMESİ: .UPPER() -> .upper() olarak değiştirildi.

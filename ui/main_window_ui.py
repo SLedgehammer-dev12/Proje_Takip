@@ -19,7 +19,7 @@ import os
 import sys
 from PySide6.QtGui import QActionGroup, QFont, QIcon, QKeySequence
 
-from app_paths import get_resource_path
+from app_paths import get_internal_path
 from widgets import ZoomableScrollArea, WatermarkedPanelContainer
 from config import (
     ENABLE_WATERMARK,
@@ -715,6 +715,22 @@ def _setup_menubar(self):
         # Use a QAction for toggling contrast
         from PySide6.QtGui import QAction
 
+        performance_action = QAction("Performans Modu", self)
+        performance_action.setCheckable(True)
+        performance_action.setChecked(
+            bool(getattr(self, "is_performance_mode_enabled", lambda: False)())
+        )
+
+        def _toggle_performance_mode(checked):
+            try:
+                self.set_performance_mode_enabled(bool(checked))
+            except Exception:
+                pass
+
+        performance_action.triggered.connect(_toggle_performance_mode)
+        self.performance_mode_action = performance_action
+        gorunum_menu.addAction(performance_action)
+
         toggle_action = QAction("Düşük Kontrast", self)
         toggle_action.setCheckable(True)
 
@@ -832,7 +848,7 @@ def _setup_menubar(self):
 def show_user_guide_tab(self):
     # Keep same behavior - try to read KULLANIM_KILAVUZU.md and show textual content
     try:
-        guide_path = get_resource_path("KULLANIM_KILAVUZU.md")
+        guide_path = get_internal_path("KULLANIM_KILAVUZU.md")
         if os.path.exists(guide_path):
             with open(guide_path, "r", encoding="utf-8") as f:
                 guide_text = f.read()

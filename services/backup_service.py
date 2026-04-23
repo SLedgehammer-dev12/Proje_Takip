@@ -7,6 +7,7 @@ import time
 import hashlib
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from app_paths import get_user_data_path
 from utils import get_class_logger
 
 
@@ -25,7 +26,10 @@ class BackupService:
             ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in db_name
         ).strip("_") or "varsayilan"
         path_hash = hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:10]
-        return str(Path(backup_folder) / f"{safe_db_name}_{path_hash}")
+        backup_root = Path(backup_folder)
+        if not backup_root.is_absolute():
+            backup_root = Path(get_user_data_path(backup_folder, create_parent=True))
+        return str(backup_root / f"{safe_db_name}_{path_hash}")
 
     def _ensure_backup_folder(self):
         """Yedek klasörünü oluştur"""
