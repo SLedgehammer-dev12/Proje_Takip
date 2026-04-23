@@ -4,7 +4,7 @@ import os
 import logging
 import datetime
 
-# 'Tuple' tipi yerine ProjeModel ve RevizyonModel kullanÄ±lacak
+# 'Tuple' tipi yerine ProjeModel ve RevizyonModel kullanılacak
 from typing import Callable, Optional, Dict, List
 
 # Counter removed - not used directly in this module
@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
     QMenu,
 )
 
-# QTimer, Ã§Ã¶kme dÃ¼zeltmesi iÃ§in eklendi
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSettings, QUrl
+# QTimer, çökme düzeltmesi için eklendi
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QSettings, QUrl, QThread
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -38,7 +38,7 @@ from PySide6.QtGui import (
     QIcon,
 )  # QFont eklendi
 
-# ModÃ¼llerimizden iÃ§e aktarma
+# Modüllerimizden içe aktarma
 from config import (
     APP_NAME,
     APP_VERSION,
@@ -59,12 +59,21 @@ from i18n import (
     tr,
 )
 
-# YENÄ°: Veri modelleri import edildi
+# YENİ: Veri modelleri import edildi
 from models import Durum, ProjeModel, RevizyonModel
 from database import ProjeTakipDB
-from utils import dosyadan_tarih_sayi_cikar, dosyadan_proje_bilgisi_cikar, get_class_logger
+from runtime_prefs import (
+    is_performance_mode_enabled,
+    set_performance_mode_enabled as persist_performance_mode_enabled,
+)
+from utils import (
+    dosyadan_tarih_sayi_cikar,
+    dosyadan_proje_bilgisi_cikar,
+    get_class_logger,
+    set_runtime_logging_mode,
+)
 
-# ArayÃ¼z modÃ¼llerimizden iÃ§e aktarma
+# Arayüz modüllerimizden içe aktarma
 from dialogs import (
     ProjeDialog,
     YeniRevizyonDialog,
@@ -78,17 +87,18 @@ from dialogs import (
 )
 from filters import AdvancedFilterManager
 from AdvancedFilterDialog import AdvancedFilterDialog
+from services.data_load_worker import DataLoadWorker
 
 # =============================================================================
 # ANA PENCERE SINIFI
 # =============================================================================
 
-# Kategori ID'sini saklamak iÃ§in Ã¶zel rol
+# Kategori ID'sini saklamak için özel rol
 KATEGORI_ID_ROL = Qt.UserRole + 1
 
 
 class AnaPencere(QMainWindow):
-    # --- Ã‡Ã–KME DÃœZELTMESÄ° (ADIM 1): Sinyale rev_id (int) eklendi ---
+    # --- ÇÖKME DÜZELTMESİ (ADIM 1): Sinyale rev_id (int) eklendi ---
     _start_pdf_render = Signal(bytes, float, int)
     # New: signal to request rendering of a yazi (incoming letter) document
     _start_yazi_render = Signal(bytes, float, str)
@@ -114,15 +124,24 @@ class AnaPencere(QMainWindow):
             )
         except Exception:
             self._tok_variant = "light"
-        # Lazy loading iÃ§in private deÄŸiÅŸkenler (servisler ilk eriÅŸimde yÃ¼klenecek)
+        self._performance_mode = is_performance_mode_enabled()
+        self._revision_preview_delay_ms = 250
+        self._letter_preview_delay_ms = 450
+        self._default_zoom_factor = 1.5
+        self._performance_zoom_factor = 1.15
+        self._normal_ui_cache_max_size = 500
+        self._performance_ui_cache_max_size = 200
+        self._apply_performance_profile_settings()
+        # Lazy loading için private değişkenler (servisler ilk erişimde yüklenecek)
         self._controller = None
+        self._document_intelligence_service = None
         self._document_service = None
         self._file_service = None
         self._preview_state_helper = None
         self._preview_render_service = None
         self._report_service = None
         self._excel_loader = None
-        self._excel_loader_initialized = False  # None valid bir deÄŸer olduÄŸu iÃ§in ayrÄ± flag
+        self._excel_loader_initialized = False  # None valid bir değer olduğu için ayrı flag
         self._update_check_in_progress = False
         self._update_download_in_progress = False
         self._startup_update_check_scheduled = False
@@ -130,18 +149,23 @@ class AnaPencere(QMainWindow):
         self._memory_usage_probe: Optional[Callable[[], Optional[float]]] = None
         self._startup_backup_scheduled = False
         self._scheduled_letter_preview_payload = None
+        # Async yükleme kontrol değişkenleri
+        self._project_load_token = 0
+        self._project_load_threads: Dict[int, QThread] = {}
+        self._revision_load_token = 0
+        self._revision_load_threads: Dict[int, QThread] = {}
 
-        # Initialize authentication service (login iÃ§in gerekli, lazy yapÄ±lamaz)
+        # Initialize authentication service (login için gerekli, lazy yapılamaz)
         from services.auth_service import AuthService
         self.auth_service = auth_service if auth_service is not None else AuthService(self.db)
 
-        # Otomatik yedekleme - uygulama aÃ§Ä±lÄ±ÅŸÄ±nda
+        # Otomatik yedekleme - uygulama açılışında
         self._acilista_yedek_al()
 
-        # Cache mekanizmasÄ± - sÄ±k kullanÄ±lan verileri Ã¶nbelleÄŸe al
+        # Cache mekanizması - sık kullanılan verileri önbelleğe al
         self._kategori_yolu_cache: Dict[int, str] = {}
         self._proje_detay_cache: Dict[int, ProjeModel] = {}
-        self._cache_max_size = 500  # Maksimum cache boyutu (optimized: 100 â†’ 500)
+        self._cache_max_size = self._ui_cache_max_size
 
         self.kategori_items_map: Dict[int, QTreeWidgetItem] = {}
         self.istatistik_etiketleri = {}  # Initialize to prevent AttributeError
@@ -152,10 +176,10 @@ class AnaPencere(QMainWindow):
         self._clearing_filters = False
         self._sadece_takipteki_revizyonlar = False
 
-        # Otomatik kayÄ±t mekanizmasÄ±
+        # Otomatik kayıt mekanizması
         self._degisiklik_sayaci = 0
         self._son_otomatik_kayit = datetime.datetime.now()
-        self._otomatik_kayit_esik = 10  # 10 deÄŸiÅŸiklikte bir kaydet
+        self._otomatik_kayit_esik = 10  # 10 değişiklikte bir kaydet
         # Default to 3 minutes = 180 seconds. Allow user override via QSettings: db/autosave_interval_sec
         try:
             settings = QSettings(APP_NAME, APP_NAME)
@@ -165,14 +189,13 @@ class AnaPencere(QMainWindow):
         except Exception:
             self._otomatik_kayit_suresi = 180  # fallback 3 minutes
 
-        # Otomatik kayÄ±t timer'Ä±
+        # Otomatik kayıt timer'ı
         self.otomatik_kayit_timer = QTimer()
         self.otomatik_kayit_timer.timeout.connect(self._otomatik_kayit_kontrol)
         self.otomatik_kayit_timer.start(self._otomatik_kayit_suresi * 1000)  # ms
 
-        self.zoom_factor = 1.5
         self.MIN_ZOOM = 0.5
-        self.MAX_ZOOM = 5.0
+        self.MAX_ZOOM = 4.0 if self._performance_mode else 5.0
         self.ZOOM_STEP = 0.2
 
         self.filter_timer = QTimer(self)
@@ -187,15 +210,21 @@ class AnaPencere(QMainWindow):
         self.letter_preview_timer.setSingleShot(True)
         self.letter_preview_timer.timeout.connect(self._trigger_letter_preview_update)
 
-        # Memory monitoring timer - interval uzatÄ±ldÄ± ve daha hafif yapÄ±ldÄ±
+        # Memory monitoring timer - interval uzatıldı ve daha hafif yapıldı
         self.mem_timer = QTimer(self)
-        self.mem_timer.setInterval(60000)  # Dakikada bir: daha dusuk polling maliyeti
+        self.mem_timer.setInterval(180000 if self._performance_mode else 60000)
         self.mem_timer.timeout.connect(self._update_memory_label)
+
+        self.presence_timer = QTimer(self)
+        self.presence_timer.setInterval(20000)
+        self.presence_timer.timeout.connect(self._heartbeat_presence)
 
         # Placeholder label, created in toolbar setup
         self.memory_label = None
 
         self.setup_ui()
+        self._heartbeat_presence()
+        self.presence_timer.start()
         # Connect update-check signal
         try:
             self._update_check_complete.connect(self._on_update_check_complete)
@@ -248,6 +277,7 @@ class AnaPencere(QMainWindow):
             try:
                 self.preview_timer.stop()
                 self.letter_preview_timer.stop()
+                self.presence_timer.stop()
             except Exception:
                 pass
             try:
@@ -275,18 +305,23 @@ class AnaPencere(QMainWindow):
         except Exception:
             pass
         try:
+            if getattr(self, "auth_service", None):
+                self.auth_service.shutdown()
+        except Exception:
+            pass
+        try:
             if hasattr(self, "db") and hasattr(self.db, "cleanup_connections"):
                 self.db.cleanup_connections()
         except Exception:
             pass
 
     # =========================================================================
-    # LAZY LOADING PROPERTIES - Servisler ilk eriÅŸimde yÃ¼klenir (startup hÄ±zlandÄ±rma)
+    # LAZY LOADING PROPERTIES - Servisler ilk erişimde yüklenir (startup hızlandırma)
     # =========================================================================
 
     @property
     def controller(self):
-        """Lazy loading for MainController - sadece gerektiÄŸinde yÃ¼klenir."""
+        """Lazy loading for MainController - sadece gerektiğinde yüklenir."""
         if self._controller is None:
             try:
                 from controllers.main_controller import MainController
@@ -294,7 +329,7 @@ class AnaPencere(QMainWindow):
                 self._controller.initialize()
                 self.logger.debug("MainController lazy loaded")
             except Exception as e:
-                self.logger.warning(f"MainController yÃ¼klenemedi: {e}")
+                self.logger.warning(f"MainController yüklenemedi: {e}")
                 return None
         return self._controller
 
@@ -305,14 +340,14 @@ class AnaPencere(QMainWindow):
 
     @property
     def file_service(self):
-        """Lazy loading for FileService - sadece gerektiÄŸinde yÃ¼klenir."""
+        """Lazy loading for FileService - sadece gerektiğinde yüklenir."""
         if self._file_service is None:
             try:
                 from services.file_service import FileService
                 self._file_service = FileService(parent=self)
                 self.logger.debug("FileService lazy loaded")
             except Exception as e:
-                self.logger.warning(f"FileService yÃ¼klenemedi: {e}")
+                self.logger.warning(f"FileService yüklenemedi: {e}")
                 return None
         return self._file_service
 
@@ -323,14 +358,14 @@ class AnaPencere(QMainWindow):
 
     @property
     def document_service(self):
-        """Lazy loading for DocumentService - sadece gerektiÄŸinde yÃ¼klenir."""
+        """Lazy loading for DocumentService - sadece gerektiğinde yüklenir."""
         if self._document_service is None:
             try:
                 from services.document_service import DocumentService
 
                 file_service = self.file_service
                 if file_service is None:
-                    self.logger.warning("DocumentService iÃ§in FileService yÃ¼klenemedi")
+                    self.logger.warning("DocumentService için FileService yüklenemedi")
                     return None
 
                 self._document_service = DocumentService(
@@ -340,7 +375,7 @@ class AnaPencere(QMainWindow):
                 )
                 self.logger.debug("DocumentService lazy loaded")
             except Exception as e:
-                self.logger.warning(f"DocumentService yÃ¼klenemedi: {e}")
+                self.logger.warning(f"DocumentService yüklenemedi: {e}")
                 return None
         return self._document_service
 
@@ -350,15 +385,32 @@ class AnaPencere(QMainWindow):
         self._document_service = value
 
     @property
+    def document_intelligence_service(self):
+        """Lazy loading for document metadata extraction / OCR helper."""
+        if self._document_intelligence_service is None:
+            try:
+                from services.document_intelligence_service import DocumentIntelligenceService
+
+                self._document_intelligence_service = DocumentIntelligenceService()
+            except Exception as e:
+                self.logger.warning(f"DocumentIntelligenceService yüklenemedi: {e}")
+                return None
+        return self._document_intelligence_service
+
+    @document_intelligence_service.setter
+    def document_intelligence_service(self, value):
+        self._document_intelligence_service = value
+
+    @property
     def report_service(self):
-        """Lazy loading for ReportService - sadece gerektiÄŸinde yÃ¼klenir."""
+        """Lazy loading for ReportService - sadece gerektiğinde yüklenir."""
         if self._report_service is None:
             try:
                 from services.report_service import ReportService
                 self._report_service = ReportService(db=self.db, parent=self)
                 self.logger.debug("ReportService lazy loaded")
             except Exception as e:
-                self.logger.warning(f"ReportService yÃ¼klenemedi: {e}")
+                self.logger.warning(f"ReportService yüklenemedi: {e}")
                 return None
         return self._report_service
 
@@ -369,14 +421,14 @@ class AnaPencere(QMainWindow):
 
     @property
     def preview_state(self):
-        """Lazy loading for PreviewStateHelper - sadece gerektiÄŸinde yÃ¼klenir."""
+        """Lazy loading for PreviewStateHelper - sadece gerektiğinde yüklenir."""
         if self._preview_state_helper is None:
             try:
                 from ui.preview_state_helper import PreviewStateHelper
 
                 self._preview_state_helper = PreviewStateHelper(self)
             except Exception as e:
-                self.logger.warning(f"PreviewStateHelper yÃ¼klenemedi: {e}")
+                self.logger.warning(f"PreviewStateHelper yüklenemedi: {e}")
                 return None
         return self._preview_state_helper
 
@@ -387,14 +439,17 @@ class AnaPencere(QMainWindow):
 
     @property
     def preview_render_service(self):
-        """Lazy loading for PreviewRenderService - sadece gerektiÄŸinde yÃ¼klenir."""
+        """Lazy loading for PreviewRenderService - sadece gerektiğinde yüklenir."""
         if self._preview_render_service is None:
             try:
                 from services.preview_render_service import PreviewRenderService
 
                 self._preview_render_service = PreviewRenderService(db=self.db)
+                self._preview_render_service.configure_performance_mode(
+                    self.is_performance_mode_enabled()
+                )
             except Exception as e:
-                self.logger.warning(f"PreviewRenderService yÃ¼klenemedi: {e}")
+                self.logger.warning(f"PreviewRenderService yüklenemedi: {e}")
                 return None
         return self._preview_render_service
 
@@ -403,9 +458,139 @@ class AnaPencere(QMainWindow):
         """PreviewRenderService setter for backward compatibility."""
         self._preview_render_service = value
 
+    def is_performance_mode_enabled(self) -> bool:
+        return bool(getattr(self, "_performance_mode", False))
+
+    def _apply_performance_profile_settings(self):
+        self._ui_cache_max_size = (
+            self._performance_ui_cache_max_size
+            if self.is_performance_mode_enabled()
+            else self._normal_ui_cache_max_size
+        )
+        self.zoom_factor = (
+            self._performance_zoom_factor
+            if self.is_performance_mode_enabled()
+            else self._default_zoom_factor
+        )
+        self.MAX_ZOOM = 4.0 if self.is_performance_mode_enabled() else 5.0
+        self._revision_preview_delay_ms = (
+            400 if self.is_performance_mode_enabled() else 250
+        )
+        self._letter_preview_delay_ms = (
+            0 if self.is_performance_mode_enabled() else 450
+        )
+
+    def _apply_runtime_performance_mode(self):
+        self._apply_performance_profile_settings()
+        self._cache_max_size = self._ui_cache_max_size
+        if hasattr(self, "mem_timer") and self.mem_timer is not None:
+            self.mem_timer.setInterval(
+                180000 if self.is_performance_mode_enabled() else 60000
+            )
+        render_service = self._preview_render_service
+        if render_service is not None and hasattr(
+            render_service, "configure_performance_mode"
+        ):
+            render_service.configure_performance_mode(self.is_performance_mode_enabled())
+        controller = getattr(self, "_controller", None)
+        if controller is not None and hasattr(controller, "configure_pdf_worker_profile"):
+            controller.configure_pdf_worker_profile(self.is_performance_mode_enabled())
+        if hasattr(self, "log_panel") and self.log_panel is not None:
+            self.log_panel.set_performance_mode(self.is_performance_mode_enabled())
+        if hasattr(self, "yazi_onizleme_yukle_btn"):
+            self.yazi_onizleme_yukle_btn.setVisible(
+                self.is_performance_mode_enabled()
+            )
+            self._update_letter_preview_load_button(
+                getattr(self, "_scheduled_letter_preview_payload", None)
+            )
+
+    def _refresh_performance_mode_action(self):
+        action = getattr(self, "performance_mode_action", None)
+        if action is None:
+            return
+        try:
+            action.blockSignals(True)
+            action.setChecked(self.is_performance_mode_enabled())
+        finally:
+            try:
+                action.blockSignals(False)
+            except Exception:
+                pass
+
+    def set_performance_mode_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        if enabled == self.is_performance_mode_enabled():
+            self._refresh_performance_mode_action()
+            return
+
+        self._performance_mode = persist_performance_mode_enabled(enabled)
+        set_runtime_logging_mode(self._performance_mode)
+        self._apply_runtime_performance_mode()
+        self._refresh_performance_mode_action()
+
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                from ui.styles import apply_stylesheet
+
+                apply_stylesheet(
+                    app,
+                    variant=str(getattr(self, "_tok_variant", "light")),
+                    performance_mode=self.is_performance_mode_enabled(),
+                )
+        except Exception:
+            pass
+
+        try:
+            self._cache_temizle()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "letter_preview_timer"):
+                self.letter_preview_timer.stop()
+            self._scheduled_letter_preview_payload = None
+            self._current_yazi_payload = None
+            self._set_letter_preview_message(
+                "Performans modunda yazı ön izlemesi otomatik yüklenmez."
+                if self.is_performance_mode_enabled()
+                else "Revizyona ait yazı ön izlemesi burada görünür."
+            )
+            self._update_letter_preview_load_button()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "_status") and self._status is not None:
+                self._status.showMessage(
+                    "Performans modu açıldı"
+                    if self.is_performance_mode_enabled()
+                    else "Performans modu kapatıldı",
+                    4000,
+                )
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "sekme_widget") and hasattr(self, "log_panel"):
+                self.log_panel.set_live_updates_enabled(
+                    self.sekme_widget.currentIndex() == 3
+                    and not self.is_performance_mode_enabled()
+                )
+        except Exception:
+            pass
+
+        try:
+            item = self._get_secili_revizyon_item()
+            if item:
+                self.preview_timer.start(self._revision_preview_delay_ms)
+        except Exception:
+            pass
+
     @property
     def excel_loader(self):
-        """Lazy loading for ExcelLoaderService - sadece gerektiÄŸinde yÃ¼klenir."""
+        """Lazy loading for ExcelLoaderService - sadece gerektiğinde yüklenir."""
         if not self._excel_loader_initialized:
             self._excel_loader_initialized = True
             try:
@@ -415,7 +600,7 @@ class AnaPencere(QMainWindow):
                 self.logger.debug(f"ExcelLoaderService lazy loaded: {excel_path}")
             except Exception as e:
                 self._excel_loader = None
-                self.logger.warning(f"ExcelLoaderService yÃ¼klenemedi: {e}")
+                self.logger.warning(f"ExcelLoaderService yüklenemedi: {e}")
         return self._excel_loader
 
     @excel_loader.setter
@@ -448,6 +633,11 @@ class AnaPencere(QMainWindow):
                     self.mem_timer.stop()
             except Exception:
                 pass
+            try:
+                if hasattr(self, "presence_timer"):
+                    self.presence_timer.stop()
+            except Exception:
+                pass
 
             # Dokuman cache temizle
             try:
@@ -465,6 +655,18 @@ class AnaPencere(QMainWindow):
             try:
                 if hasattr(self, "_update_download_thread") and self._update_download_thread is not None:
                     self._update_download_thread.join(timeout=2.0)
+            except Exception:
+                pass
+            # Data load worker threadlerini bekle
+            try:
+                for t in list(getattr(self, "_project_load_threads", {}).values()):
+                    if t and t.isRunning():
+                        t.quit()
+                        t.wait(2000)
+                for t in list(getattr(self, "_revision_load_threads", {}).values()):
+                    if t and t.isRunning():
+                        t.quit()
+                        t.wait(2000)
             except Exception:
                 pass
 
@@ -487,6 +689,11 @@ class AnaPencere(QMainWindow):
                 pass
 
             # Cleanup DB connections
+            try:
+                if getattr(self, "auth_service", None):
+                    self.auth_service.shutdown()
+            except Exception:
+                pass
             try:
                 # Ensure one final commit before closing
                 try:
@@ -518,9 +725,9 @@ class AnaPencere(QMainWindow):
                 pass
 
     def _otomatik_kayit_kontrol(self):
-        """Periyodik olarak Ã§aÄŸrÄ±lan otomatik kayÄ±t kontrolÃ¼.
-        Belirlenen eÅŸik ya da sÃ¼re aÅŸÄ±ldÄ±ÄŸÄ±nda veritabanÄ±na commit yapar,
-        cache'leri temizler ve sayacÄ± sÄ±fÄ±rlar.
+        """Periyodik olarak çağrılan otomatik kayıt kontrolü.
+        Belirlenen eşik ya da süre aşıldığında veritabanına commit yapar,
+        cache'leri temizler ve sayacı sıfırlar.
         """
         try:
             if not hasattr(self, "db"):
@@ -534,7 +741,7 @@ class AnaPencere(QMainWindow):
             threshold = getattr(self, "_otomatik_kayit_esik", 10)
             interval = getattr(self, "_otomatik_kayit_suresi", 30)
 
-            # EÄŸer eÅŸik veya sÃ¼re aÅŸÄ±ldÄ±ysa kaydet
+            # Eğer eşik veya süre aşıldıysa kaydet
             if change_count >= threshold or elapsed >= interval:
                 try:
                     # Centralize commit call to DB method
@@ -560,12 +767,12 @@ class AnaPencere(QMainWindow):
                         pass
 
                     self.logger.info(
-                        f"âœ… Otomatik kayÄ±t: {saved} deÄŸiÅŸiklik kaydedildi ve cache temizlendi"
+                        f"✅ Otomatik kayıt: {saved} değişiklik kaydedildi ve cache temizlendi"
                     )
                     # Inform user through status bar (short) about an autosave
                     try:
                         if getattr(self, "_status", None) and saved > 0:
-                            self._status.showMessage("Otomatik kayÄ±t yapÄ±ldÄ±", 3000)
+                            self._status.showMessage("Otomatik kayıt yapıldı", 3000)
                     except Exception:
                         pass
                     # Update small UI element so user sees status
@@ -574,7 +781,7 @@ class AnaPencere(QMainWindow):
                     except Exception:
                         pass
                 except Exception as e:
-                    self.logger.error(f"Otomatik kayÄ±tta hata: {e}", exc_info=True)
+                    self.logger.error(f"Otomatik kayıtta hata: {e}", exc_info=True)
         except Exception:
             pass
 
@@ -697,51 +904,175 @@ class AnaPencere(QMainWindow):
             pass
 
     def projeleri_yukle(self):
-        """Load projects list from controller or database and update UI.
-        This is a minimal adapter in refactored code to ensure older call sites work.
-        """
+        """Projeleri arka planda yükle, UI'da kademeli göster."""
         try:
-            if getattr(self, "controller", None):
-                projects = self.controller.get_projects()
-            else:
+            self._project_load_token += 1
+            token = self._project_load_token
+            self._show_project_loading_state()
+            self._start_async_project_load(token)
+            # Watchdog: async sonuç 2 sn içinde gelmez veya boş gelirse senkron fallback dene
+            try:
+                QTimer.singleShot(2000, lambda: self._ensure_projects_loaded(token))
+            except Exception:
+                pass
+        except Exception as e:
+            self.logger.error(f"projeleri_yukle hata: {e}", exc_info=True)
+            # Fallback: eski senkron yol
+            try:
                 projects = self.db.projeleri_listele()
-            # normalize to list
+                self._on_projects_loaded(self._project_load_token, projects)
+            except Exception:
+                pass
+
+    def _show_project_loading_state(self):
+        """Yükleme esnasında basit bir placeholder göster."""
+        try:
+            if hasattr(self, "_status"):
+                self._status.showMessage("Projeler yükleniyor...", 2000)
+            if hasattr(self, "project_panel") and hasattr(self.project_panel, "proje_listesi_widget"):
+                self.project_panel.proje_listesi_widget.clear()
+                item = QListWidgetItem("Projeler yükleniyor...")
+                item.setFlags(Qt.NoItemFlags)
+                self.project_panel.proje_listesi_widget.addItem(item)
+        except Exception:
+            pass
+
+    def _start_async_project_load(self, token: int):
+        """Yeni bir QThread üzerinde projeleri getir."""
+        try:
+            thread = QThread(self)
+            worker = DataLoadWorker(self.current_db_file, "projects", token)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.projects_loaded.connect(self._on_projects_loaded)
+            worker.error.connect(self._on_project_load_error)
+            worker.finished.connect(self._on_project_load_finished)
+            worker.finished.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            self._project_load_threads[token] = thread
+            thread.start()
+        except Exception as e:
+            self.logger.error(f"Async project load başlatılamadı: {e}", exc_info=True)
+            # fallback senkron
+            projects = self.db.projeleri_listele()
+            self._on_projects_loaded(token, projects)
+
+    def _on_projects_loaded(self, token: int, projects):
+        if token != self._project_load_token:
+            return  # eski sonuç
+        try:
+            # Birincil sonuç
             self.tum_projeler = projects or []
-            # Clear filter cache to avoid returning stale cached results after DB changes
+
+            # Fallback: Async sonuç boşsa senkron sorgu yap
+            if not self.tum_projeler:
+                try:
+                    self.logger.warning("Async proje yükleme 0 döndü; senkron fallback başlatılıyor.")
+                    self.tum_projeler = self.db.projeleri_listele() or []
+                except Exception as e_diag:
+                    self.logger.error(f"Projeleri senkron fallback ile okuma hatası: {e_diag}", exc_info=True)
+
+            # Hâlâ boşsa kullanıcıya görünür uyarı
+            if not self.tum_projeler and hasattr(self, "_status"):
+                try:
+                    self._status.showMessage("Projeler bulunamadı veya yüklenemedi.", 4000)
+                except Exception:
+                    pass
+            # Filter cache temizliği
             try:
                 if getattr(self, "filter_manager", None):
                     self.filter_manager.clear_cache()
             except Exception:
                 pass
-            # If any advanced filters are active, re-apply them instead of blindly populating all projects
+
+            # Aktif filtre varsa uygula
             if getattr(self, "filter_manager", None) and len(
                 getattr(self.filter_manager, "active_filters", [])
             ):
                 try:
                     self.apply_filters()
                 except Exception as e:
-                    self.logger.error(
-                        f"apply_filters sÄ±rasÄ±nda hata: {e}", exc_info=True
-                    )
+                    self.logger.error(f"apply_filters sırasında hata: {e}", exc_info=True)
             else:
-                # Update UI - populate the list and category tree
                 try:
-                    # Use UI population helper to render the loaded projects
                     self._populate_projects_ui(self.tum_projeler)
-                    self.logger.info(
-                        f"Projeler baÅŸarÄ±yla yÃ¼klendi (Toplam: {len(self.tum_projeler)})"
-                    )
+                    self.logger.info(f"Projeler yüklendi (Toplam: {len(self.tum_projeler)})")
                 except Exception as e_inner:
-                    self.logger.error(
-                        f"projeleri_yukle UI update hata: {e_inner}", exc_info=True
-                    )
-                    # Fallback: if display_filtered_projects is not present, try to set items directly
+                    self.logger.error(f"projeleri_yukle UI update hata: {e_inner}", exc_info=True)
                     try:
                         self.proje_listesi_widget.clear()
                     except Exception:
                         pass
         except Exception as e:
-            self.logger.error(f"projeleri_yukle hata: {e}", exc_info=True)
+            self.logger.error(f"_on_projects_loaded hata: {e}", exc_info=True)
+
+    def _on_project_load_error(self, token: int, message: str):
+        if token != self._project_load_token:
+            return
+        try:
+            self.logger.error(f"Projeler yüklenemedi: {message}")
+            if hasattr(self, "_status"):
+                self._status.showMessage(f"Projeler yüklenemedi: {message}", 4000)
+            # Dosya bulunamadıysa kullanıcıdan yeni veritabanı seçmesini iste
+            low = message.lower() if isinstance(message, str) else ""
+            if "bulunamad" in low or "no such file" in low or "cannot find" in low:
+                QMessageBox.warning(
+                    self,
+                    tr("Hata"),
+                    tr("Veritabanı dosyası bulunamadı. Lütfen doğru veritabanını seçin."),
+                )
+                try:
+                    self.veritabani_ac()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _ensure_projects_loaded(self, token: int):
+        """Async yükleme başarısız veya boş kalırsa senkron yedek yol."""
+        if token != self._project_load_token:
+            return
+        try:
+            if getattr(self, "tum_projeler", None):
+                return  # zaten dolu
+            self.logger.warning("Projeler async yüklenemedi veya boş; senkron fallback çalışıyor.")
+            projects = self.db.projeleri_listele()
+            self._on_projects_loaded(token, projects)
+        except Exception as e:
+            self.logger.error(f"_ensure_projects_loaded hata: {e}", exc_info=True)
+
+    def _on_project_load_finished(self, token: int):
+        thread = self._project_load_threads.pop(token, None)
+        try:
+            if thread and thread.isRunning():
+                thread.quit()
+                thread.wait(500)
+        except Exception:
+            pass
+
+    def _start_async_revision_load(self, token: int, proje_id: int):
+        """Seçilen proje için revizyonları arka planda getir."""
+        try:
+            thread = QThread(self)
+            worker = DataLoadWorker(self.current_db_file, "revisions", token, proje_id=proje_id)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.revisions_loaded.connect(self._on_revisions_loaded)
+            worker.error.connect(self._on_revision_load_error)
+            worker.finished.connect(self._on_revision_load_finished)
+            worker.finished.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            self._revision_load_threads[token] = thread
+            thread.start()
+        except Exception as e:
+            self.logger.error(f"Async revision load başlatılamadı: {e}", exc_info=True)
+            try:
+                revisions = self.db.revizyonlari_getir(proje_id)
+                self._on_revisions_loaded(token, proje_id, revisions)
+            except Exception:
+                pass
 
     def _acilista_yedek_al(self):
         """Uygulama acilisinda yedegi UI oturduktan sonra ve gerekliyse al."""
@@ -849,16 +1180,16 @@ class AnaPencere(QMainWindow):
         except Exception:
             text = "Bellek: n/a"
 
-        # Update labels - hata durumunda UI'Ä± bloklamadan atla
+        # Update labels - hata durumunda UI'ı bloklamadan atla
         try:
             memory_label = getattr(self, "status_mem_label", None) or getattr(
                 self, "memory_label", None
             )
             if memory_label:
-                # Otomatik kayÄ±t durumunu da gÃ¶ster
+                # Otomatik kayıt durumunu da göster
                 if hasattr(self, "_degisiklik_sayaci") and self._degisiklik_sayaci > 0:
                     memory_label.setText(
-                        f"{text} | âš ï¸ {self._degisiklik_sayaci} deÄŸiÅŸiklik"
+                        f"{text} | ⚠️ {self._degisiklik_sayaci} değişiklik"
                     )
                 else:
                     memory_label.setText(text)
@@ -903,6 +1234,8 @@ class AnaPencere(QMainWindow):
         from ui.main_window_ui import setup_ui as _ui_setup
 
         _ui_setup(self)
+        self._apply_runtime_performance_mode()
+        self._refresh_performance_mode_action()
         # Status bar for professional app feedback
         try:
             self._status = self.statusBar()
@@ -928,7 +1261,7 @@ class AnaPencere(QMainWindow):
         try:
             self._restore_ui_state()
         except Exception as e:
-            self.logger.warning(f"UI durumu geri yÃ¼klenemedi: {e}")
+            self.logger.warning(f"UI durumu geri yüklenemedi: {e}")
 
         # Watermark overlay (center, thin)
         try:
@@ -942,7 +1275,7 @@ class AnaPencere(QMainWindow):
                 self._watermark.raise_()
         except Exception as e:
             # Watermark failing should not break the UI
-            self.logger.warning(f"Filigran yÃ¼klenemedi: {e}")
+            self.logger.warning(f"Filigran yüklenemedi: {e}")
 
         self.proje_agaci_widget.projeTasindi.connect(self.on_proje_tasindi)
         self.revizyon_agaci.itemSelectionChanged.connect(
@@ -956,15 +1289,15 @@ class AnaPencere(QMainWindow):
         self.proje_agaci_widget.customContextMenuRequested.connect(
             self._kategori_gorunumu_context_menu
         )
-        # Event filter'Ä± sadece gerekli widget'lara uygula (tÃ¼m pencere yerine)
+        # Event filter'ı sadece gerekli widget'lara uygula (tüm pencere yerine)
         self.proje_listesi_widget.installEventFilter(self)
         self.proje_agaci_widget.installEventFilter(self)
         self.revizyon_agaci.installEventFilter(self)
 
-        # Pencere baÅŸlÄ±ÄŸÄ±nÄ± DB dosyasÄ± ile gÃ¼ncelle
+        # Pencere başlığını DB dosyası ile güncelle
         self._update_window_title()
 
-        # Son kullanÄ±lan dosyayÄ± kaydet
+        # Son kullanılan dosyayı kaydet
         self._son_kullanilan_dosya_kaydet()
         # Initialize action states
         try:
@@ -1047,7 +1380,7 @@ class AnaPencere(QMainWindow):
             from PySide6.QtWidgets import QFileDialog
             dest_dir = QFileDialog.getExistingDirectory(
                 self,
-                "GÃ¼ncelleme Ä°ndirilecek KlasÃ¶rÃ¼ SeÃ§in",
+                "Güncelleme İndirilecek Klasörü Seçin",
                 self._get_downloads_dir(),
                 QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
             )
@@ -1094,7 +1427,7 @@ class AnaPencere(QMainWindow):
                                     "status": "error",
                                     "error": verification.get(
                                         "error",
-                                        "Ä°ndirilen dosya doÄŸrulanamadÄ±.",
+                                        "İndirilen dosya doğrulanamadı.",
                                     ),
                                 }
                             )
@@ -1119,7 +1452,7 @@ class AnaPencere(QMainWindow):
             self._update_download_in_progress = False
             if not self._update_check_in_progress:
                 self._set_update_action_enabled(True)
-            self.logger.error(f"GÃ¼ncelleme indirme baÅŸlatÄ±lamadÄ±: {e}", exc_info=True)
+            self.logger.error(f"Güncelleme indirme başlatılamadı: {e}", exc_info=True)
             QMessageBox.critical(
                 self,
                 tr("İndirme Başlatılamadı"),
@@ -1190,7 +1523,7 @@ class AnaPencere(QMainWindow):
                 self._update_check_in_progress = False
                 if not self._update_download_in_progress:
                     self._set_update_action_enabled(True)
-                self.logger.error(f"GÃ¼ncelleme kontrolÃ¼ baÅŸlatÄ±lamadÄ±: {e}", exc_info=True)
+                self.logger.error(f"Güncelleme kontrolü başlatılamadı: {e}", exc_info=True)
             except Exception:
                 pass
 
@@ -1447,7 +1780,15 @@ class AnaPencere(QMainWindow):
 
     def _setup_revizyonlar_panel(self):
         from ui.panels.revision_panel import RevisionPanel
-        from PySide6.QtWidgets import QSplitter, QWidget, QVBoxLayout, QLabel, QPushButton, QScrollArea
+        from PySide6.QtWidgets import (
+            QSplitter,
+            QWidget,
+            QVBoxLayout,
+            QLabel,
+            QPushButton,
+            QScrollArea,
+            QSizePolicy,
+        )
         from PySide6.QtCore import Qt
 
         self.revision_panel = RevisionPanel()
@@ -1488,7 +1829,44 @@ class AnaPencere(QMainWindow):
         self.yazi_onizleme_scroll = QScrollArea()
         self.yazi_onizleme_scroll.setWidget(self.yazi_onizleme_etiketi)
         self.yazi_onizleme_scroll.setWidgetResizable(True)
+        self.yazi_onizleme_scroll.setMinimumHeight(300)
+        self.yazi_onizleme_scroll.setSizePolicy(
+            QSizePolicy.Preferred, QSizePolicy.Expanding
+        )
         yazi_layout.addWidget(self.yazi_onizleme_scroll)
+
+        self.yazi_onizleme_yukle_btn = QPushButton("⚡ Ön İzlemeyi Yükle")
+        self.yazi_onizleme_yukle_btn.setEnabled(False)
+        self.yazi_onizleme_yukle_btn.setFixedHeight(30)
+        self.yazi_onizleme_yukle_btn.setCursor(Qt.PointingHandCursor)
+        self.yazi_onizleme_yukle_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #f7f9fc;
+                color: #2f3542;
+                border: 1px solid #d9dee7;
+                border-radius: 8px;
+                padding: 4px 10px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #eef6ff;
+                border-color: #9bc2e6;
+            }
+            QPushButton:pressed {
+                background-color: #dbeafb;
+            }
+            QPushButton:disabled {
+                background-color: #f4f6f9;
+                color: #9aa3b2;
+                border-color: #e6e9ef;
+            }
+            """
+        )
+        self.yazi_onizleme_yukle_btn.clicked.connect(
+            self._on_yazi_onizleme_yukle_btn_clicked
+        )
+        yazi_layout.addWidget(self.yazi_onizleme_yukle_btn)
 
         self.yazi_ac_btn = QPushButton("\U0001f4c4 Yaz\u0131y\u0131 Tam Ekran A\u00e7")
         self.yazi_ac_btn.setEnabled(False)
@@ -1528,7 +1906,9 @@ class AnaPencere(QMainWindow):
         rev_splitter = QSplitter(Qt.Vertical)
         rev_splitter.addWidget(self.revision_panel)
         rev_splitter.addWidget(self.yazi_onizleme_panel)
-        rev_splitter.setSizes([550, 250])
+        rev_splitter.setSizes([300, 600])
+        rev_splitter.setStretchFactor(0, 1)
+        rev_splitter.setStretchFactor(1, 2)
         rev_splitter.setCollapsible(1, True)
 
         return rev_splitter
@@ -1539,6 +1919,28 @@ class AnaPencere(QMainWindow):
 
         self.detail_panel = DetailPanel()
         self.detay_etiketleri = self.detail_panel.detay_etiketleri  # Compatibility
+        # Mojibake + noktalama koruması: UTF-8/LATIN-1 karışan ve ":" içeren/ içermeyen anahtarlar için yedekler ekle
+        try:
+            extra_keys = {}
+            for k, v in list(self.detay_etiketleri.items()):
+                variants = set()
+                variants.add(k.rstrip(":"))
+                try:
+                    variants.add(k.encode("utf-8").decode("latin-1"))
+                    variants.add(k.encode("utf-8").decode("latin-1").rstrip(":"))
+                except Exception:
+                    pass
+                try:
+                    variants.add(k.encode("latin-1").decode("utf-8"))
+                    variants.add(k.encode("latin-1").decode("utf-8").rstrip(":"))
+                except Exception:
+                    pass
+                for alt in variants:
+                    if alt and alt not in self.detay_etiketleri and alt not in extra_keys:
+                        extra_keys[alt] = v
+            self.detay_etiketleri.update(extra_keys)
+        except Exception:
+            pass
         return self.detail_panel
 
     def _setup_onizleme_panel(self):
@@ -1552,6 +1954,7 @@ class AnaPencere(QMainWindow):
         # Compatibility aliases
         self.onizleme_etiketi = self.preview_panel.onizleme_etiketi
         self.goruntule_btn = self.preview_panel.goruntule_btn
+        self.onizleme_scroll_alani = self.preview_panel.scroll_area
 
         return self.preview_panel
 
@@ -1624,7 +2027,7 @@ class AnaPencere(QMainWindow):
         # original method body moved to ui/main_window_ui.show_user_guide_tab
 
     def show_version_info(self):
-        """SÃ¼rÃ¼m bilgisi ve katkÄ± mesajÄ±nÄ± gÃ¶ster."""
+        """Sürüm bilgisi ve katkı mesajını göster."""
         try:
             mesaj = (
                 f"{tr(APP_NAME)} {APP_VERSION}\n\n"
@@ -1632,7 +2035,7 @@ class AnaPencere(QMainWindow):
             )
             QMessageBox.information(self, tr("Sürüm Bilgisi"), mesaj)
         except Exception as e:
-            self.logger.error(f"SÃ¼rÃ¼m bilgisi gÃ¶sterilemedi: {e}")
+            self.logger.error(f"Sürüm bilgisi gösterilemedi: {e}")
 
     def focus_search(self):
         """Place focus into the main search box (arama_kutusu)."""
@@ -1671,7 +2074,7 @@ class AnaPencere(QMainWindow):
                 app.setPalette(self._previous_palette)
                 delattr(self, "_previous_palette")
         except Exception as e:
-            self.logger.warning(f"Tema deÄŸiÅŸtirme hatasÄ±: {e}")
+            self.logger.warning(f"Tema değiştirme hatası: {e}")
 
     def toggle_tok_theme(self):
         """Toggle Tok theme between light and dark by calling ui.styles toggle helper.
@@ -1693,7 +2096,7 @@ class AnaPencere(QMainWindow):
             self.logger.info("Tema degistirildi: %s", meta.get("label", applied_variant))
             self._refresh_tok_theme_actions()
         except Exception as e:
-            self.logger.warning(f"TOK tema deÄŸiÅŸtirme hatasÄ±: {e}")
+            self.logger.warning(f"TOK tema değiştirme hatası: {e}")
 
     def set_tok_theme_variant(self, variant: str):
         """Apply a specific TOK theme variant chosen from the menu."""
@@ -1734,30 +2137,30 @@ class AnaPencere(QMainWindow):
             pass
 
     # =============================================================================
-    # SÃœRÃœKLE-BIRAK SLOTU (ADIM 4.3 GÃœNCELLEMESÄ°)
+    # SÜRÜKLE-BIRAK SLOTU (ADIM 4.3 GÜNCELLEMESİ)
     # =============================================================================
 
     @Slot(int, int)
     def on_proje_tasindi(self, proje_id: int, yeni_kategori_id: int):
-        """KategoriAgaci widget'Ä±ndan gelen 'projeTasindi' sinyalini iÅŸler."""
+        """KategoriAgaci widget'ından gelen 'projeTasindi' sinyalini işler."""
         try:
-            # "Kategorisiz" item'Ä± ID 0 olarak gelir.
-            # VeritabanÄ±nda bunu NULL (None) olarak saklamalÄ±yÄ±z.
+            # "Kategorisiz" item'ı ID 0 olarak gelir.
+            # Veritabanında bunu NULL (None) olarak saklamalıyız.
             db_kategori_id = yeni_kategori_id if yeni_kategori_id > 0 else None
 
-            # AdÄ±m 4.1'de eklediÄŸimiz ID tabanlÄ± yeni fonksiyonu kullanÄ±yoruz.
+            # Adım 4.1'de eklediğimiz ID tabanlı yeni fonksiyonu kullanıyoruz.
             self.db.projeyi_kategoriye_tasi(proje_id, db_kategori_id)
 
-            # (AdÄ±m 3'ten gelen) Ã‡Ã¶kmeyi Ã¶nleyen ertelenmiÅŸ yenileme
+            # (Adım 3'ten gelen) Çökmeyi önleyen ertelenmiş yenileme
             QTimer.singleShot(0, self.yenile)
 
         except Exception as e:
-            # --- LOG GÃœNCELLEMESÄ° ---
+            # --- LOG GÜNCELLEMESİ ---
             self.logger.critical(
-                f"Proje (ID: {proje_id}) taÅŸÄ±nÄ±rken hata: {e}", exc_info=True
+                f"Proje (ID: {proje_id}) taşınırken hata: {e}", exc_info=True
             )
             QMessageBox.critical(
-                self, "TaÅŸÄ±ma HatasÄ±", f"Proje taÅŸÄ±nÄ±rken bir hata oluÅŸtu: {e}"
+                self, "Taşıma Hatası", f"Proje taşınırken bir hata oluştu: {e}"
             )
 
     # =============================================================================
@@ -1791,11 +2194,17 @@ class AnaPencere(QMainWindow):
         self.revizyon_secilince_detay_guncelle()
         self.letter_preview_timer.stop()
         self._scheduled_letter_preview_payload = None
+        self._update_letter_preview_load_button()
         if rev:
-            self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
+            if self.is_performance_mode_enabled():
+                self._queue_letter_preview_for_revision(rev, delay_ms=0, force=False)
+            else:
+                self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
         else:
-            self._set_letter_preview_message("Revizyona ait yazı ön izlemesi burada görünür.")
-        self.preview_timer.start(250)
+            self._set_letter_preview_message(
+                "Revizyona ait yazı ön izlemesi burada görünür."
+            )
+        self.preview_timer.start(self._revision_preview_delay_ms)
         try:
             self._update_action_states()
         except Exception:
@@ -1833,15 +2242,48 @@ class AnaPencere(QMainWindow):
         set_widget_text(self.yazi_onizleme_etiketi, text)
         self.yazi_ac_btn.setEnabled(False)
         self._current_yazi_payload = None
+        self._update_letter_preview_load_button(
+            getattr(self, "_scheduled_letter_preview_payload", None)
+        )
+
+    def _update_letter_preview_load_button(self, payload: Optional[dict] = None):
+        if not hasattr(self, "yazi_onizleme_yukle_btn"):
+            return
+        self.yazi_onizleme_yukle_btn.setVisible(self.is_performance_mode_enabled())
+        self.yazi_onizleme_yukle_btn.setEnabled(
+            bool(
+                self.is_performance_mode_enabled()
+                and payload
+                and payload.get("yazi_no")
+            )
+        )
+
+    def _on_yazi_onizleme_yukle_btn_clicked(self) -> bool:
+        item = self._get_secili_revizyon_item()
+        current_rev = item.data(0, Qt.UserRole) if item else None
+        if not current_rev:
+            self._set_letter_preview_message(
+                "Revizyona ait yazı ön izlemesi burada görünür."
+            )
+            return False
+
+        self._queue_letter_preview_for_revision(current_rev, delay_ms=0, force=True)
+        self._trigger_letter_preview_update()
+        return True
 
     def _queue_letter_preview_for_revision(
-        self, rev: Optional[RevizyonModel], delay_ms: int = 450
+        self,
+        rev: Optional[RevizyonModel],
+        delay_ms: Optional[int] = None,
+        *,
+        force: bool = False,
     ):
         if not hasattr(self, "yazi_onizleme_etiketi"):
             return
 
         self.letter_preview_timer.stop()
         self._scheduled_letter_preview_payload = None
+        delay_ms = self._letter_preview_delay_ms if delay_ms is None else delay_ms
 
         if not rev:
             self._set_letter_preview_message("Revizyona ait yazı ön izlemesi burada görünür.")
@@ -1854,6 +2296,14 @@ class AnaPencere(QMainWindow):
             return
 
         self._scheduled_letter_preview_payload = letter_payload
+        self._update_letter_preview_load_button(letter_payload)
+        if self.is_performance_mode_enabled() and not force:
+            self._set_letter_preview_message(
+                "Performans modunda yazı ön izlemesi otomatik yüklenmez.\nÖn İzlemeyi Yükle düğmesini kullanın."
+            )
+            self._scheduled_letter_preview_payload = letter_payload
+            return
+
         self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
         if delay_ms > 0:
             self.letter_preview_timer.start(delay_ms)
@@ -1912,11 +2362,11 @@ class AnaPencere(QMainWindow):
     ) -> bool:
         """Delegate temp-file document opening to FileService."""
         if not self.file_service:
-            self.logger.error("FileService mevcut olmadÄ±ÄŸÄ± iÃ§in dokÃ¼man aÃ§Ä±lamadÄ±.")
+            self.logger.error("FileService mevcut olmadığı için doküman açılamadı.")
             QMessageBox.critical(
                 self,
                 error_title,
-                "DokÃ¼man aÃ§ma servisi yÃ¼klenemedi.",
+                "Doküman açma servisi yüklenemedi.",
             )
             return False
 
@@ -2038,9 +2488,9 @@ class AnaPencere(QMainWindow):
             return True
         cevap = QMessageBox.warning(
             self,
-            "ÅÃ¼pheli DokÃ¼man UyarÄ±sÄ±",
-            f"SeÃ§tiÄŸiniz {letter_type} dokÃ¼manÄ±, revizyon dokÃ¼manÄ± ile birebir aynÄ± gÃ¶rÃ¼nÃ¼yor.\n\n"
-            "Bu dosya yanlÄ±ÅŸlÄ±kla yÃ¼klenmiÅŸ olabilir. Yine de kaydetmek istiyor musunuz?",
+            "Şüpheli Doküman Uyarısı",
+            f"Seçtiğiniz {letter_type} dokümanı, revizyon dokümanı ile birebir aynı görünüyor.\n\n"
+            "Bu dosya yanlışlıkla yüklenmiş olabilir. Yine de kaydetmek istiyor musunuz?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -2057,11 +2507,11 @@ class AnaPencere(QMainWindow):
         self._goruntule_dokuman()
 
     # =============================================================================
-    # SEÃ‡Ä°M Ä°ÅLEMLERÄ°
+    # SEÇİM İŞLEMLERİ
     # =============================================================================
 
     def proje_secilince(self):
-        """Listeden proje seÃ§ildiÄŸinde"""
+        """Listeden proje seçildiğinde"""
         items = self.proje_listesi_widget.selectedItems()
         if not items:
             self.secili_proje_id = None
@@ -2073,16 +2523,13 @@ class AnaPencere(QMainWindow):
         item = items[0]
         proje: ProjeModel = item.data(Qt.UserRole)
         self.secili_proje_id = proje.id
-        revizyonlar = self._get_project_revisions_for_ui(proje.id)
-
-        # DetaylarÄ± gÃ¼ncelle
-        self.proje_detaylarini_goster(proje, revizyonlar=revizyonlar)
-
-        # RevizyonlarÄ± yÃ¼kle
-        self.revizyonlari_yukle(proje.id, revizyonlar=revizyonlar)
+        # Detayları güncelle (rev listesi gelince de tekrar güncellenir)
+        self.proje_detaylarini_goster(proje, revizyonlar=None)
+        # Revizyonları asenkron yükle
+        self.revizyonlari_yukle(proje.id, revizyonlar=None)
 
     def _agactan_proje_secilince(self):
-        """AÄŸaÃ§tan proje seÃ§ildiÄŸinde"""
+        """Ağaçtan proje seçildiğinde"""
         items = self.proje_agaci_widget.selectedItems()
         if not items:
             self.secili_proje_id = None
@@ -2095,7 +2542,7 @@ class AnaPencere(QMainWindow):
         proje: Optional[ProjeModel] = item.data(0, Qt.UserRole)
 
         if not proje:
-            # Kategori seÃ§ildi, temizle
+            # Kategori seçildi, temizle
             self.secili_proje_id = None
             self.revizyon_agaci.clear()
             self.detaylari_temizle()
@@ -2105,10 +2552,10 @@ class AnaPencere(QMainWindow):
         self.secili_proje_id = proje.id
         revizyonlar = self._get_project_revisions_for_ui(proje.id)
 
-        # DetaylarÄ± gÃ¼ncelle
+        # Detayları güncelle
         self.proje_detaylarini_goster(proje, revizyonlar=revizyonlar)
 
-        # RevizyonlarÄ± yÃ¼kle
+        # Revizyonları yükle
         self.revizyonlari_yukle(proje.id, revizyonlar=revizyonlar)
 
     def _get_project_revisions_for_ui(self, proje_id: int):
@@ -2117,7 +2564,7 @@ class AnaPencere(QMainWindow):
                 return self.controller.get_revisions(proje_id)
             return self.db.revizyonlari_getir(proje_id)
         except Exception:
-            self.logger.debug("UI iÃ§in revizyonlar yÃ¼klenemedi", exc_info=True)
+            self.logger.debug("UI için revizyonlar yüklenemedi", exc_info=True)
             return []
 
     def _get_excel_validation_info(self, proje_kodu: str) -> Optional[dict]:
@@ -2144,7 +2591,7 @@ class AnaPencere(QMainWindow):
                     'project_name': excel_name
                 }
             else:
-                self.logger.debug(f"Proje '{proje_kodu}' Excel listesinde bulunamadÄ±")
+                self.logger.debug(f"Proje '{proje_kodu}' Excel listesinde bulunamadı")
                 return {
                     'is_in_list': False,
                     'project_type': '-',
@@ -2155,26 +2602,26 @@ class AnaPencere(QMainWindow):
             return None
 
     def proje_detaylarini_goster(self, proje: ProjeModel, revizyonlar=None):
-        """SeÃ§ili proje detaylarÄ±nÄ± saÄŸ panelde gÃ¶ster"""
+        """Seçili proje detaylarını sağ panelde göster"""
         try:
             if not proje:
                 return
 
             self.detay_etiketleri["Proje Kodu:"].setText(proje.proje_kodu)
-            self.detay_etiketleri["Proje Ä°smi:"].setText(proje.proje_ismi)
+            self.detay_etiketleri["Proje İsmi:"].setText(proje.proje_ismi)
             set_widget_text(
-                self.detay_etiketleri["Proje TÃ¼rÃ¼:"], proje.proje_turu or "-"
+                self.detay_etiketleri["Proje Türü:"], proje.proje_turu or "-"
             )
 
-            # HiyerarÅŸi yolunu bul (kategori_id'den)
+            # Hiyerarşi yolunu bul (kategori_id'den)
             hiyerarsi = self.db.get_kategori_yolu(proje.kategori_id)
-            self.detay_etiketleri["HiyerarÅŸi Yolu:"].setText(hiyerarsi)
+            self.detay_etiketleri["Hiyerarşi Yolu:"].setText(hiyerarsi)
 
             # Get all revisions for smart gelen/giden lookup
             if revizyonlar is None:
                 revizyonlar = self._get_project_revisions_for_ui(proje.id)
 
-            # Find most recent gelen and giden yazÄ±
+            # Find most recent gelen and giden yazı
             gelen_yazi_no = "-"
             gelen_yazi_tarih = "-"
             gelen_rev_code = ""
@@ -2185,13 +2632,13 @@ class AnaPencere(QMainWindow):
 
             # Search through revisions starting from newest (list is already sorted newest to oldest DESC)
             for rev in revizyonlar:  # No need to reverse - already DESC
-                # Look for gelen yazÄ± if not found yet
+                # Look for gelen yazı if not found yet
                 if gelen_yazi_no == "-" and rev.gelen_yazi_no:
                     gelen_yazi_no = rev.gelen_yazi_no
                     gelen_yazi_tarih = rev.gelen_yazi_tarih or "-"
                     gelen_rev_code = rev.revizyon_kodu
 
-                # Look for giden yazÄ± if not found yet
+                # Look for giden yazı if not found yet
                 if giden_yazi_no == "-":
                     if rev.onay_yazi_no:
                         giden_yazi_no = rev.onay_yazi_no
@@ -2208,26 +2655,26 @@ class AnaPencere(QMainWindow):
 
             # Display with revision code in parentheses
             if gelen_yazi_no != "-" and gelen_rev_code:
-                self.detay_etiketleri["En Son Gelen YazÄ± No:"].setText(
+                self.detay_etiketleri["En Son Gelen Yazı No:"].setText(
                     f"{gelen_yazi_no} ({gelen_rev_code})"
                 )
-                self.detay_etiketleri["En Son Gelen YazÄ± Tarihi:"].setText(
+                self.detay_etiketleri["En Son Gelen Yazı Tarihi:"].setText(
                     gelen_yazi_tarih
                 )
             else:
-                self.detay_etiketleri["En Son Gelen YazÄ± No:"].setText("-")
-                self.detay_etiketleri["En Son Gelen YazÄ± Tarihi:"].setText("-")
+                self.detay_etiketleri["En Son Gelen Yazı No:"].setText("-")
+                self.detay_etiketleri["En Son Gelen Yazı Tarihi:"].setText("-")
 
             if giden_yazi_no != "-" and giden_rev_code:
-                self.detay_etiketleri["En Son Giden YazÄ± No:"].setText(
+                self.detay_etiketleri["En Son Giden Yazı No:"].setText(
                     f"{giden_yazi_no} ({giden_rev_code})"
                 )
-                self.detay_etiketleri["En Son Giden YazÄ± Tarihi:"].setText(
+                self.detay_etiketleri["En Son Giden Yazı Tarihi:"].setText(
                     giden_yazi_tarih
                 )
             else:
-                self.detay_etiketleri["En Son Giden YazÄ± No:"].setText("-")
-                self.detay_etiketleri["En Son Giden YazÄ± Tarihi:"].setText("-")
+                self.detay_etiketleri["En Son Giden Yazı No:"].setText("-")
+                self.detay_etiketleri["En Son Giden Yazı Tarihi:"].setText("-")
 
             # En son revizyon bilgisi
             son_rev = revizyonlar[0] if revizyonlar else None
@@ -2263,57 +2710,56 @@ class AnaPencere(QMainWindow):
                     self.detay_etiketleri["Liste Durumu:"].setStyleSheet("color: #757575;")
                 
                 set_widget_text(self.detay_etiketleri["Liste Durumu:"], liste_durumu)
-                if "Listedeki TÃ¼r:" in self.detay_etiketleri:
-                    set_widget_text(self.detay_etiketleri["Listedeki TÃ¼r:"], excel_type)
+                if "Listedeki Tür:" in self.detay_etiketleri:
+                    set_widget_text(self.detay_etiketleri["Listedeki Tür:"], excel_type)
             elif "Liste Durumu:" in self.detay_etiketleri:
                 # No validation info available
                 self.detay_etiketleri["Liste Durumu:"].setText("-")
                 self.detay_etiketleri["Liste Durumu:"].setStyleSheet("")
-                if "Listedeki TÃ¼r:" in self.detay_etiketleri:
-                    self.detay_etiketleri["Listedeki TÃ¼r:"].setText("-")
+                if "Listedeki Tür:" in self.detay_etiketleri:
+                    self.detay_etiketleri["Listedeki Tür:"].setText("-")
 
         except Exception as e:
-            self.logger.error(f"Proje detaylarÄ± gÃ¶sterilirken hata: {e}")
+            self.logger.error(f"Proje detayları gösterilirken hata: {e}")
 
     def revizyonlari_yukle(self, proje_id, revizyonlar=None):
-        """SeÃ§ili projenin revizyonlarÄ±nÄ± yÃ¼kle"""
+        """Seçili projenin revizyonlarını asenkron yükle ve kademeli göster."""
         try:
-            # Fetch revisions
             if revizyonlar is None:
-                revizyonlar = self._get_project_revisions_for_ui(proje_id)
+                self._revision_load_token += 1
+                token = self._revision_load_token
+                try:
+                    self.revizyon_agaci.clear()
+                    placeholder = QTreeWidgetItem(self.revizyon_agaci, ["Revizyonlar yükleniyor..."])
+                    placeholder.setDisabled(True)
+                except Exception:
+                    pass
+                self._start_async_revision_load(token, proje_id)
+                return
 
             if getattr(self, "_sadece_takipteki_revizyonlar", False):
-                revizyonlar = [
-                    r
-                    for r in revizyonlar
-                    if int(getattr(r, "takipte_mi", 0) or 0) == 1
-                ]
+                revizyonlar = [r for r in revizyonlar if int(getattr(r, "takipte_mi", 0) or 0) == 1]
 
             self._show_revision_document_warnings(revizyonlar)
 
-            # Use RevisionPanel if available
-            if hasattr(self, "revision_panel") and hasattr(
-                self.revision_panel, "load_revisions"
-            ):
+            if hasattr(self, "revision_panel") and hasattr(self.revision_panel, "load_revisions"):
                 self.revision_panel.load_revisions(revizyonlar)
                 return
 
-            # Fallback to direct tree population
             self.revizyon_agaci.setSortingEnabled(False)
-            # Enforce sorting: Newest -> Oldest (RevNo DESC, ID DESC)
             revizyonlar.sort(key=lambda r: (int(r.proje_rev_no) if r.proje_rev_no is not None else -1, int(r.id)), reverse=True)
             
             self.revizyon_agaci.clear()
             headers = [
                 "Revizyon",
                 "Durum",
-                "AÃ§Ä±klama",
-                "YazÄ± TÃ¼rÃ¼",
-                "YazÄ± No",
-                "YazÄ± Tarihi",
-                "DokÃ¼man",
-                "YazÄ± Dok.",
-                "UyarÄ±",
+                "Açıklama",
+                "Yazı Türü",
+                "Yazı No",
+                "Yazı Tarihi",
+                "Doküman",
+                "Yazı Dok.",
+                "Uyarı",
                 "Takip",
             ]
             self.revizyon_agaci.setHeaderLabels(headers)
@@ -2323,10 +2769,9 @@ class AnaPencere(QMainWindow):
                     self.logger.debug(f"Loading rev item: id={rev.id}, kod={rev.revizyon_kodu}, yazi_turu={rev.yazi_turu}, gelen={rev.gelen_yazi_no}, onay={rev.onay_yazi_no}, red={rev.red_yazi_no}")
                 except Exception:
                     pass
-                # YazÄ± bilgilerini belirle
+
                 yazi_no = "-"
                 yazi_tarih = "-"
-
                 if rev.yazi_turu == "gelen":
                     yazi_no = rev.gelen_yazi_no or "-"
                     yazi_tarih = rev.gelen_yazi_tarih or "-"
@@ -2338,10 +2783,9 @@ class AnaPencere(QMainWindow):
                         yazi_no = rev.red_yazi_no
                         yazi_tarih = rev.red_yazi_tarih or "-"
 
-                # YazÄ± tÃ¼rÃ¼ gÃ¶sterimini iyileÅŸtir
                 yazi_turu_display = {
-                    "gelen": "ğŸ“¥ Gelen YazÄ±",
-                    "giden": "ğŸ“¤ Giden YazÄ±",
+                    "gelen": "📥 Gelen Yazı",
+                    "giden": "📤 Giden Yazı",
                     "yok": "-"
                 }.get(rev.yazi_turu, "-")
 
@@ -2352,20 +2796,18 @@ class AnaPencere(QMainWindow):
                 item.setText(3, yazi_turu_display)
                 item.setText(4, yazi_no)
                 item.setText(5, str(yazi_tarih))
-                # Show filename if we have it; otherwise show Var/Yok
                 filename_display = getattr(rev, "dosya_adi", None) or rev.dokuman_durumu
                 item.setText(6, filename_display)
                 yazi_dokuman_durumu = getattr(rev, "yazi_dokuman_durumu", None) or "-"
                 item.setText(7, yazi_dokuman_durumu)
                 supheli = int(getattr(rev, "supheli_yazi_dokumani", 0) or 0)
-                item.setText(8, "AynÄ± Dosya" if supheli else "-")
+                item.setText(8, "Aynı Dosya" if supheli else "-")
                 takipte_mi = int(getattr(rev, "takipte_mi", 0) or 0)
                 item.setText(9, "Takipte" if takipte_mi else "-")
                 takip_notu = getattr(rev, "takip_notu", None)
                 if takip_notu:
                     item.setToolTip(9, takip_notu)
 
-                # Renklendirme
                 if rev.durum == Durum.ONAYLI.value:
                     item.setForeground(1, QBrush(QColor("green")))
                 elif rev.durum == Durum.REDDEDILDI.value:
@@ -2374,7 +2816,7 @@ class AnaPencere(QMainWindow):
                     item.setForeground(1, QBrush(QColor("orange")))
                 if yazi_dokuman_durumu == "Eksik":
                     item.setForeground(7, QBrush(QColor("red")))
-                elif yazi_dokuman_durumu == "YÃ¼klÃ¼":
+                elif yazi_dokuman_durumu == "Yüklü":
                     item.setForeground(7, QBrush(QColor("green")))
                 if supheli:
                     item.setForeground(8, QBrush(QColor("darkorange")))
@@ -2386,18 +2828,16 @@ class AnaPencere(QMainWindow):
 
                 item.setData(0, Qt.UserRole, rev)
 
-            # SÃ¼tun geniÅŸlikleri
             for i in range(10):
                 self.revizyon_agaci.resizeColumnToContents(i)
 
         except Exception as e:
-            self.logger.error(f"Revizyonlar yÃ¼klenirken hata: {e}")
+            self.logger.error(f"Revizyonlar yüklenirken hata: {e}")
         finally:
             try:
                 self._update_action_states()
             except Exception:
                 pass
-
     def _show_revision_document_warnings(self, revizyonlar: List[RevizyonModel]):
         """Show missing/suspicious outgoing letter doc warnings for the selected project."""
         try:
@@ -2414,21 +2854,21 @@ class AnaPencere(QMainWindow):
             if eksik or supheli:
                 parcalar = []
                 if eksik:
-                    parcalar.append(f"{eksik} eksik yazÄ± dokÃ¼manÄ±")
+                    parcalar.append(f"{eksik} eksik yazı dokümanı")
                 if supheli:
-                    parcalar.append(f"{supheli} ÅŸÃ¼pheli aynÄ± dosya")
-                mesaj = "UyarÄ±: " + ", ".join(parcalar)
+                    parcalar.append(f"{supheli} şüpheli aynı dosya")
+                mesaj = "Uyarı: " + ", ".join(parcalar)
                 if hasattr(self, "_status") and self._status is not None:
                     self._status.showMessage(mesaj, 8000)
         except Exception:
-            self.logger.debug("YazÄ± dokÃ¼manÄ± uyarÄ±larÄ± hesaplanamadÄ±", exc_info=True)
+            self.logger.debug("Yazı dokümanı uyarıları hesaplanamadı", exc_info=True)
 
     def revizyon_secilince_detay_guncelle(self):
-        """Revizyon seÃ§ildiÄŸinde detaylarÄ± gÃ¼ncelle (varsa)"""
-        # Åu an iÃ§in ekstra bir detay paneli yok, sadece preview tetikleniyor
+        """Revizyon seçildiğinde detayları güncelle (varsa)"""
+        # Şu an için ekstra bir detay paneli yok, sadece preview tetikleniyor
 
     def _get_secili_revizyon_item(self) -> Optional[QTreeWidgetItem]:
-        """SeÃ§ili revizyon Ã¶ÄŸesini dÃ¶ndÃ¼rÃ¼r"""
+        """Seçili revizyon öğesini döndürür"""
         items = self.revizyon_agaci.selectedItems()
         if items:
             return items[0]
@@ -2489,7 +2929,7 @@ class AnaPencere(QMainWindow):
             etiket.setText("")
 
     def _clear_preview(self):
-        """Ã–nizleme panelini temizle"""
+        """Önizleme panelini temizle"""
         try:
             self.preview_timer.stop()
         except Exception:
@@ -2566,7 +3006,7 @@ class AnaPencere(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Revizyon Sil", 
-            f"'{rev.revizyon_kodu}' revizyonunu silmek istediÄŸinize emin misiniz?\nBu iÅŸlem geri alÄ±namaz.",
+            f"'{rev.revizyon_kodu}' revizyonunu silmek istediğinize emin misiniz?\nBu işlem geri alınamaz.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -2582,19 +3022,19 @@ class AnaPencere(QMainWindow):
                         self._invalidate_filter_cache_and_reload(keep_project_id=self.secili_proje_id)
                     except Exception:
                         pass
-                QMessageBox.information(self, "BaÅŸarÄ±lÄ±", "Revizyon baÅŸarÄ±yla silindi.")
+                QMessageBox.information(self, "Başarılı", "Revizyon başarıyla silindi.")
             else:
                 QMessageBox.critical(self, "Hata", "Revizyon silinemedi.")
         except Exception as e:
-            self.logger.error(f"Revizyon silme hatasÄ±: {e}", exc_info=True)
-            QMessageBox.critical(self, "Hata", f"Revizyon silinirken hata oluÅŸtu: {e}")
+            self.logger.error(f"Revizyon silme hatası: {e}", exc_info=True)
+            QMessageBox.critical(self, "Hata", f"Revizyon silinirken hata oluştu: {e}")
 
     # =============================================================================
-    # FÄ°LTRELEME Ä°ÅLEMLERÄ°
+    # FİLTRELEME İŞLEMLERİ
     # =============================================================================
 
     def show_advanced_filters(self):
-        """GeliÅŸmiÅŸ filtreleme dialogunu gÃ¶ster"""
+        """Gelişmiş filtreleme dialogunu göster"""
         dialog = AdvancedFilterDialog(self, self.filter_manager)
         self.filter_manager.begin_batch_update()
         try:
@@ -2610,17 +3050,17 @@ class AnaPencere(QMainWindow):
             self.update_filter_indicator()
             self.guncelle_gosterge_panelini()
             self.logger.info(
-                f"Filtreler uygulandÄ±: {len(self.filter_manager.active_filters)} aktif filtre"
+                f"Filtreler uygulandı: {len(self.filter_manager.active_filters)} aktif filtre"
             )
         except Exception as e:
-            # --- LOG GÃœNCELLEMESÄ° ---
-            self.logger.critical(f"Filtre uygulanÄ±rken hata: {e}")
+            # --- LOG GÜNCELLEMESİ ---
+            self.logger.critical(f"Filtre uygulanırken hata: {e}")
             QMessageBox.critical(
-                self, "Filtre HatasÄ±", f"Filtreler uygulanÄ±rken hata oluÅŸtu: {e}"
+                self, "Filtre Hatası", f"Filtreler uygulanırken hata oluştu: {e}"
             )
 
     def display_filtered_projects(self, projects: List[ProjeModel]):
-        """FiltrelenmiÅŸ projeleri gÃ¶ster"""
+        """Filtrelenmiş projeleri göster"""
         # Set current project pool and populate UI according to current search/filter
         self.tum_projeler = projects
         # Apply any search box filter on top
@@ -2629,7 +3069,7 @@ class AnaPencere(QMainWindow):
         )
 
     def update_filter_indicator(self):
-        """Filtre gÃ¶stergesini gÃ¼ncelle"""
+        """Filtre göstergesini güncelle"""
         filter_count = len(self.filter_manager.active_filters)
         if filter_count > 0:
             set_widget_text(self.filter_indicator, f"Filtre: {filter_count} aktif")
@@ -2649,7 +3089,7 @@ class AnaPencere(QMainWindow):
             self.filter_indicator.setStyleSheet("color: #666; padding: 5px;")
 
     def clear_filters(self):
-        """TÃ¼m filtreleri temizle"""
+        """Tüm filtreleri temizle"""
         try:
             self._clearing_filters = True
             self.filter_manager.clear_filters()
@@ -2662,21 +3102,21 @@ class AnaPencere(QMainWindow):
         self.logger.info("Filtreler temizlendi")
 
     def on_filters_changed(self):
-        """Filtreler deÄŸiÅŸtiÄŸinde otomatik uygula"""
+        """Filtreler değiştiğinde otomatik uygula"""
         # Avoid re-entrancy: if we are currently in the process of clearing filters, ignore the signal
         if getattr(self, "_clearing_filters", False):
             return
         self.apply_filters()
 
     # =============================================================================
-    # ARAYÃœZ YÃœKLEME VE GÃœNCELLEME METODLARI
+    # ARAYÜZ YÜKLEME VE GÜNCELLEME METODLARI
     # =============================================================================
 
     def _on_search_text_changed(self):
         self.filter_timer.start(300)
 
     def _on_list_selection_changed(self):
-        # Preview timer gereksiz - revizyonlari_yukle iÃ§inde otomatik tetikleniyor
+        # Preview timer gereksiz - revizyonlari_yukle içinde otomatik tetikleniyor
         self.proje_secilince()
         # Update enabled/disabled action states
         try:
@@ -2685,7 +3125,7 @@ class AnaPencere(QMainWindow):
             pass
 
     def _on_tree_selection_changed(self):
-        # Preview timer gereksiz - revizyonlari_yukle iÃ§inde otomatik tetikleniyor
+        # Preview timer gereksiz - revizyonlari_yukle içinde otomatik tetikleniyor
         self._agactan_proje_secilince()
         try:
             self._update_action_states()
@@ -2696,22 +3136,26 @@ class AnaPencere(QMainWindow):
         self.revizyon_secilince_detay_guncelle()
         self.letter_preview_timer.stop()
         self._scheduled_letter_preview_payload = None
+        self._update_letter_preview_load_button()
         item = self._get_secili_revizyon_item()
         rev = item.data(0, Qt.UserRole) if item else None
         if rev:
-            self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
+            if self.is_performance_mode_enabled():
+                self._queue_letter_preview_for_revision(rev, delay_ms=0, force=False)
+            else:
+                self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
         else:
             self._set_letter_preview_message("Revizyona ait yazı ön izlemesi burada görünür.")
-        self.preview_timer.start(250)
+        self.preview_timer.start(self._revision_preview_delay_ms)
         try:
             self._update_action_states()
         except Exception:
             pass
 
     def _on_revizyon_double_clicked(self, item, column):
-        """Handle double-click on revision tree - open letter PDF if clicked on YazÄ± No column"""
+        """Handle double-click on revision tree - open letter PDF if clicked on Yazı No column"""
         try:
-            # Column 4 is "YazÄ± No"
+            # Column 4 is "Yazı No"
             if column == 4:
                 yazi_no = item.text(4)
                 # Get yazi_turu from the revision data
@@ -2721,7 +3165,7 @@ class AnaPencere(QMainWindow):
                     if yazi_turu:
                         self.on_letter_clicked(yazi_no, yazi_turu)
         except Exception as e:
-            self.logger.error(f"Revizyon Ã§ift tÄ±klama hatasÄ±: {e}", exc_info=True)
+            self.logger.error(f"Revizyon çift tıklama hatası: {e}", exc_info=True)
 
     def _update_action_states(self):
         """Enable/disable menu and toolbar actions based on current selection state."""
@@ -2805,6 +3249,7 @@ class AnaPencere(QMainWindow):
     def _setup_permissions(self):
         """Configure UI elements based on user permissions (guest vs logged in)."""
         is_guest = self.auth_service.is_guest
+        can_write = self.auth_service.has_permission('write')
         
         try:
             # List of actions/buttons to disable for guest users
@@ -2836,11 +3281,13 @@ class AnaPencere(QMainWindow):
             for action_name in restricted_actions:
                 if hasattr(self, action_name):
                     action = getattr(self, action_name)
-                    action.setEnabled(not is_guest)
+                    action.setEnabled(can_write)
                     
             # Update UI to show permission status
             if is_guest:
                 self.logger.info("Guest mode: UI restrictions applied")
+            elif not can_write:
+                self.logger.warning("Write lease inactive: UI switched to read-only mode")
             else:
                 self.logger.info(f"Full access granted to user: {self.auth_service.get_current_username()}")
                 
@@ -2854,6 +3301,8 @@ class AnaPencere(QMainWindow):
                 user_display = self.auth_service.get_current_display_name()
                 if self.auth_service.is_guest:
                     status_text = f"👤 {user_display} ({tr('Sadece Görüntüleme')})"
+                elif not self.auth_service.has_permission('write'):
+                    status_text = f"⚠️ {user_display} ({tr('Sadece Görüntüleme')})"
                 else:
                     status_text = f"✅ {user_display}"
                 
@@ -2867,7 +3316,49 @@ class AnaPencere(QMainWindow):
         except Exception as e:
             self.logger.warning(f"Failed to update user status label: {e}")
 
-    def _check_write_permission(self, action_name: str = "bu iÅŸlemi yapmak") -> bool:
+    def _heartbeat_presence(self):
+        try:
+            if getattr(self, "auth_service", None):
+                heartbeat_ok = self.auth_service.heartbeat_session()
+                if heartbeat_ok is False and getattr(self.auth_service, "current_user", None):
+                    self._setup_permissions()
+                    self._update_user_status_label()
+                    message = self.auth_service.get_write_state_message()
+                    if message and hasattr(self, "_status"):
+                        self._status.showMessage(message, 8000)
+        except Exception as e:
+            self.logger.debug("Presence heartbeat başarısız: %s", e)
+        self._update_presence_status_label()
+
+    def _update_presence_status_label(self):
+        try:
+            if not hasattr(self, "_status") or not getattr(self, "auth_service", None):
+                return
+
+            sessions = self.auth_service.get_active_sessions(include_self=False)
+            writer_sessions = [session for session in sessions if session.get("can_write")]
+            guest_sessions = [session for session in sessions if session.get("is_guest")]
+
+            if not hasattr(self, "presence_status_label"):
+                self.presence_status_label = QLabel()
+                self._status.addPermanentWidget(self.presence_status_label)
+
+            if writer_sessions:
+                writer_names = [session.get("username") or "?" for session in writer_sessions[:2]]
+                if len(writer_sessions) > 2:
+                    writer_names.append(f"+{len(writer_sessions) - 2}")
+                text = f"Aktif yazan: {', '.join(writer_names)}"
+            else:
+                text = "Aktif yazan: yok"
+
+            if guest_sessions:
+                text += f" | Misafir: {len(guest_sessions)}"
+
+            set_widget_text(self.presence_status_label, text)
+        except Exception as e:
+            self.logger.debug("Presence status label güncellenemedi: %s", e)
+
+    def _check_write_permission(self, action_name: str = "bu işlemi yapmak") -> bool:
         """Check if user has write permission. Shows warning if not.
         
         Args:
@@ -2877,17 +3368,25 @@ class AnaPencere(QMainWindow):
             True if user has permission, False otherwise
         """
         if not self.auth_service.has_permission('write'):
+            detail_message = self.auth_service.get_write_state_message()
+            if not detail_message:
+                detail_message = "Düzenleme yapmak için giriş yapmanız gerekiyor."
+            title_line = (
+                f"Misafir modunda {action_name} için yetkiniz yok."
+                if self.auth_service.is_guest
+                else f"{action_name} için yazma yetkiniz aktif değil."
+            )
             QMessageBox.warning(
                 self,
                 "Yetki Yok",
-                f"Misafir modunda {action_name} iÃ§in yetkiniz yok.\n\n"
-                "DÃ¼zenleme yapmak iÃ§in giriÅŸ yapmanÄ±z gerekiyor."
+                f"{title_line}\n\n"
+                f"{detail_message}"
             )
             return False
         return True
 
     def _trigger_preview_update(self):
-        """Update the preview window with the current revision's document - optimize edilmiÅŸ"""
+        """Update the preview window with the current revision's document - optimize edilmiş"""
         try:
             item = self._get_secili_revizyon_item()
             if not item:
@@ -2925,7 +3424,12 @@ class AnaPencere(QMainWindow):
             # Log debug info about document size
             try:
                 size_len = len(dokuman_verisi) if dokuman_verisi else 0
-                self.logger.debug(f"Preview will render rev_id={rev_id}, dokuman_size={size_len} bytes, zoom={self.zoom_factor}")
+                self.logger.debug(
+                    "Preview will render rev_id=%s, dokuman_size=%s bytes, zoom=%s",
+                    rev_id,
+                    size_len,
+                    self.zoom_factor,
+                )
             except Exception:
                 pass
 
@@ -2950,23 +3454,29 @@ class AnaPencere(QMainWindow):
             else:
                 set_widget_text(self.onizleme_etiketi, "Ön izleme hatası")
 
-    # --- Ã‡Ã–KME DÃœZELTMESÄ° (ADIM 3): Slot'a rev_id (int) eklendi ve GÃœVENLÄ°K KONTROLÃœ yapÄ±ldÄ± ---
+    # --- ÇÖKME DÜZELTMESİ (ADIM 3): Slot'a rev_id (int) eklendi ve GÜVENLİK KONTROLÜ yapıldı ---
     @Slot(QImage, int)
     def _on_image_ready(self, image: QImage, rendered_rev_id: int):
-        # --- GÃœVENLÄ°K KONTROLÃœ (YARIÅ DURUMU Ã–NLEME) ---
+        # --- GÜVENLİK KONTROLÜ (YARIŞ DURUMU ÖNLEME) ---
         item = self._get_secili_revizyon_item()
         if not item:
-            return  # ArayÃ¼z temizlendi (Ã¶rn: yenile'ye basÄ±ldÄ±), bu eski bir sinyal, yok say.
+            return  # Arayüz temizlendi (örn: yenile'ye basıldı), bu eski bir sinyal, yok say.
 
         current_rev: RevizyonModel = item.data(0, Qt.UserRole)
         if current_rev.id != rendered_rev_id:
-            # self.logger.warning(f"Eski sinyal yok sayÄ±ldÄ±. Mevcut: {current_rev.id}, Gelen: {rendered_rev_id}")
-            return  # KullanÄ±cÄ± bu arada baÅŸka bir ÅŸey seÃ§ti, bu eski sinyali yok say.
-        # --- KONTROL BÄ°TTÄ° ---
+            # self.logger.warning(f"Eski sinyal yok sayıldı. Mevcut: {current_rev.id}, Gelen: {rendered_rev_id}")
+            return  # Kullanıcı bu arada başka bir şey seçti, bu eski sinyali yok say.
+        # --- KONTROL BİTTİ ---
 
-        # Sadece mevcut revizyon ile eÅŸleÅŸirse iÅŸlem yap:
+        # Sadece mevcut revizyon ile eşleşirse işlem yap:
         try:
-            self.logger.debug(f"_on_image_ready: received image for rev_id={rendered_rev_id}, image_size={image.width()}x{image.height()}, bytes={image.sizeInBytes()}")
+            self.logger.debug(
+                "_on_image_ready: received image for rev_id=%s, image_size=%sx%s, bytes=%s",
+                rendered_rev_id,
+                image.width(),
+                image.height(),
+                image.sizeInBytes(),
+            )
         except Exception:
             pass
         pixmap = QPixmap.fromImage(image)
@@ -2980,10 +3490,16 @@ class AnaPencere(QMainWindow):
     def _on_yazi_image_ready(self, image: QImage, yazi_no: str):
         """Handle the preview of an incoming letter (gelen yazi) image."""
         try:
-            self.logger.debug(f"_on_yazi_image_ready: received image for yazi_no={yazi_no}, image_size={image.width()}x{image.height()}, bytes={image.sizeInBytes()}")
+            self.logger.debug(
+                "_on_yazi_image_ready: received image for yazi_no=%s, image_size=%sx%s, bytes=%s",
+                yazi_no,
+                image.width(),
+                image.height(),
+                image.sizeInBytes(),
+            )
         except Exception:
             pass
-        # Display the image regardless of selected revision â€” this is a user request to preview the letter
+        # Display the image regardless of selected revision - this is a user request to preview the letter
         pixmap = QPixmap.fromImage(image)
         item = self._get_secili_revizyon_item()
         current_rev = item.data(0, Qt.UserRole) if item else None
@@ -2995,32 +3511,33 @@ class AnaPencere(QMainWindow):
         if hasattr(self, "yazi_onizleme_etiketi"):
             self.yazi_onizleme_etiketi.setPixmap(pixmap)
             self.yazi_ac_btn.setEnabled(bool(letter_payload))
+            self._update_letter_preview_load_button(letter_payload)
             self._current_yazi_payload = letter_payload
             self._scheduled_letter_preview_payload = letter_payload
         else:
             self.onizleme_etiketi.setPixmap(pixmap)
             self.goruntule_btn.setEnabled(bool(letter_payload))
 
-    # --- Ã‡Ã–KME DÃœZELTMESÄ° (ADIM 4): Slot'a rev_id (int) eklendi ve GÃœVENLÄ°K KONTROLÃœ yapÄ±ldÄ± ---
+    # --- ÇÖKME DÜZELTMESİ (ADIM 4): Slot'a rev_id (int) eklendi ve GÜVENLİK KONTROLÜ yapıldı ---
     @Slot(str, int)
     def _on_image_error(self, error_msg: str, rendered_rev_id: int):
-        # --- GÃœVENLÄ°K KONTROLÃœ (YARIÅ DURUMU Ã–NLEME) ---
+        # --- GÜVENLİK KONTROLÜ (YARIŞ DURUMU ÖNLEME) ---
         item = self._get_secili_revizyon_item()
         if not item:
-            return  # ArayÃ¼z temizlendi
+            return  # Arayüz temizlendi
 
         current_rev: RevizyonModel = item.data(0, Qt.UserRole)
         if current_rev.id != rendered_rev_id:
-            return  # Eski bir hatayÄ± gÃ¶sterme
-        # --- KONTROL BÄ°TTÄ° ---
+            return  # Eski bir hatayı gösterme
+        # --- KONTROL BİTTİ ---
 
-        # Sadece mevcut revizyon ile eÅŸleÅŸirse iÅŸlem yap:
+        # Sadece mevcut revizyon ile eşleşirse işlem yap:
         try:
             self.logger.debug(f"_on_image_error: rev_id={rendered_rev_id}, msg={error_msg}")
         except Exception:
             pass
         self.logger.critical(
-            f"PDF Ã¶nizleme hatasÄ± (Rev ID: {rendered_rev_id}): {error_msg}"
+            f"PDF önizleme hatası (Rev ID: {rendered_rev_id}): {error_msg}"
         )
         if self.preview_state:
             self.preview_state.show_render_error(error_msg)
@@ -3028,8 +3545,41 @@ class AnaPencere(QMainWindow):
         set_widget_text(self.onizleme_etiketi, f"Önizleme oluşturulamadı.\n{error_msg}")
         self.goruntule_btn.setEnabled(False)
 
+    def _on_revisions_loaded(self, token: int, proje_id: int, revisions):
+        if token != self._revision_load_token:
+            return
+        # seçili proje değiştiyse yok say
+        if getattr(self, "secili_proje_id", None) not in (None, proje_id):
+            return
+        try:
+            self.revizyonlari_yukle_render(proje_id, revisions)
+        except Exception as e:
+            self.logger.error(f"_on_revisions_loaded hata: {e}", exc_info=True)
+
+    def _on_revision_load_error(self, token: int, message: str):
+        if token != self._revision_load_token:
+            return
+        try:
+            self.logger.error(f"Revizyonlar yüklenemedi: {message}")
+            QMessageBox.warning(self, "Revizyon Hatası", f"Revizyonlar yüklenemedi: {message}")
+        except Exception:
+            pass
+
+    def _on_revision_load_finished(self, token: int):
+        thread = self._revision_load_threads.pop(token, None)
+        try:
+            if thread and thread.isRunning():
+                thread.quit()
+                thread.wait(500)
+        except Exception:
+            pass
+
     @Slot(int)
     def _on_ana_sekme_degisti(self, index):
+        if hasattr(self, "log_panel"):
+            self.log_panel.set_live_updates_enabled(
+                index == 3 and not self.is_performance_mode_enabled()
+            )
         if index == 0 or index == 1:
             self._arama_kutusu_degisti()
         elif index == 2:
@@ -3052,11 +3602,11 @@ class AnaPencere(QMainWindow):
         except Exception as e:
             # Catch unexpected errors in search flow to prevent a crash and collect logs
             try:
-                self.logger.error(f"Hata: _arama_kutusu_degisti sÄ±rasÄ±nda hata: {e}", exc_info=True)
+                self.logger.error(f"Hata: _arama_kutusu_degisti sırasında hata: {e}", exc_info=True)
             except Exception:
                 pass
             try:
-                QMessageBox.critical(self, "Arama HatasÄ±", f"Arama sÄ±rasÄ±nda hata oluÅŸtu: {e}")
+                QMessageBox.critical(self, "Arama Hatası", f"Arama sırasında hata oluştu: {e}")
             except Exception:
                 pass
 
@@ -3094,7 +3644,7 @@ class AnaPencere(QMainWindow):
         return gosterilmeli
 
     def _revizyon_context_menu(self, position):
-        """Revizyon aÄŸacÄ± iÃ§in saÄŸ-tÄ±k menÃ¼sÃ¼."""
+        """Revizyon ağacı için sağ-tık menüsü."""
         item = self.revizyon_agaci.itemAt(position)
         if not item:
             return
@@ -3105,7 +3655,7 @@ class AnaPencere(QMainWindow):
 
         menu = QMenu(self)
 
-        # Yeni Eklenen "YazÄ±yÄ± GÃ¶rÃ¼ntÃ¼le" Aksiyonu
+        # Yeni Eklenen "Yazıyı Görüntüle" Aksiyonu
         view_letter_action = menu.addAction("\U0001f4c4 Yaz\u0131y\u0131 G\u00f6r\u00fcnt\u00fcle")
         has_letter = bool(self._build_letter_payload_for_revision(rev))
         view_letter_action.setEnabled(has_letter)
@@ -3126,44 +3676,44 @@ class AnaPencere(QMainWindow):
         elif secim == takip_kaldir_action:
             self.revizyon_takip_kaldir()
 
-    # --- GÃœNCELLEME (ADIM 5.3) ---
+    # --- GÜNCELLEME (ADIM 5.3) ---
     def _kategori_gorunumu_context_menu(self, position):
         menu = QMenu()
         item = self.proje_agaci_widget.itemAt(position)
 
-        # Metin yolu ('hiyerarsi_yolu') yerine doÄŸrudan 'kategori_id' alÄ±yoruz
+        # Metin yolu ('hiyerarsi_yolu') yerine doğrudan 'kategori_id' alıyoruz
         kategori_id: Optional[int] = None
 
         if item:
-            # TÄ±klanan bir proje mi?
+            # Tıklanan bir proje mi?
             proje_verisi: Optional[ProjeModel] = item.data(0, Qt.UserRole)
             if proje_verisi:
                 # Evet, projenin kategori ID'sini al
                 kategori_id = proje_verisi.kategori_id
             else:
-                # HayÄ±r, tÄ±klanan bir kategori. ID'sini ROL'den al
-                # (Kategorisiz item'Ä± iÃ§in bu 0 dÃ¶necek, o da None'a eÅŸitlenecek)
+                # Hayır, tıklanan bir kategori. ID'sini ROL'den al
+                # (Kategorisiz item'ı için bu 0 dönecek, o da None'a eşitlenecek)
                 kategori_id = item.data(0, KATEGORI_ID_ROL)
 
         # 'Kategorisiz' (ID=0) ise None ata
         kategori_id = kategori_id if kategori_id and kategori_id > 0 else None
 
-        yeni_proje_action = QAction("Yeni Proje OluÅŸtur...", self)
-        # _context_menu_yeni_proje'ye metin yolu yerine kategori_id'yi gÃ¶nder
+        yeni_proje_action = QAction("Yeni Proje Oluştur...", self)
+        # _context_menu_yeni_proje'ye metin yolu yerine kategori_id'yi gönder
         yeni_proje_action.triggered.connect(
             lambda: self._context_menu_yeni_proje(kategori_id)
         )
         menu.addAction(yeni_proje_action)
 
-        # Yeni kategori oluÅŸturma seÃ§eneÄŸi
-        yeni_kategori_action = QAction("Yeni Kategori OluÅŸtur...", self)
+        # Yeni kategori oluşturma seçeneği
+        yeni_kategori_action = QAction("Yeni Kategori Oluştur...", self)
         yeni_kategori_action.triggered.connect(
             lambda: self._context_menu_yeni_kategori(kategori_id)
         )
         menu.addAction(yeni_kategori_action)
 
-        # Kategori silme seÃ§eneÄŸini yalnÄ±zca kategori Ã¼zerinde gÃ¶stereceÄŸiz (proje deÄŸil)
-        # Sadece kategori dÃ¼ÄŸÃ¼mÃ¼ Ã¼zerinde saÄŸ tÄ±klandÄ±ysa silme seÃ§eneÄŸini gÃ¶ster
+        # Kategori silme seçeneğini yalnızca kategori üzerinde göstereceğiz (proje değil)
+        # Sadece kategori düğümü üzerinde sağ tıklandıysa silme seçeneğini göster
         if item and not item.data(0, Qt.UserRole) and kategori_id:
             sil_action = QAction("Kategoriyi Sil", self)
             sil_action.triggered.connect(lambda: self._kategori_sil(kategori_id))
@@ -3172,13 +3722,13 @@ class AnaPencere(QMainWindow):
         menu.exec(self.proje_agaci_widget.viewport().mapToGlobal(position))
 
     def _kategori_sil(self, kategori_id: int):
-        """Sil butonuna tÄ±klanÄ±nca veya delete tuÅŸuna basÄ±lÄ±nca Ã§aÄŸrÄ±lÄ±r.
+        """Sil butonuna tıklanınca veya delete tuşuna basılınca çağrılır.
 
-        Bu fonksiyon DB Ã¼zerinde deÄŸiÅŸiklik yapar: kategoriyi siler ve varsa projeleri Ã¼st kategoriye taÅŸÄ±r veya NULL set eder.
+        Bu fonksiyon DB üzerinde değişiklik yapar: kategoriyi siler ve varsa projeleri üst kategoriye taşır veya NULL set eder.
         """
-        # GÃ¼venlik: 0 veya None olan kategoriler silinemez
+        # Güvenlik: 0 veya None olan kategoriler silinemez
         if not kategori_id or kategori_id <= 0:
-            QMessageBox.warning(self, "UyarÄ±", "Bu kategori silinemez.")
+            QMessageBox.warning(self, "Uyarı", "Bu kategori silinemez.")
             return
 
         try:
@@ -3188,7 +3738,7 @@ class AnaPencere(QMainWindow):
                 (kategori_id,),
             ).fetchone()
             if not row:
-                QMessageBox.warning(self, "UyarÄ±", "Kategori bulunamadÄ±.")
+                QMessageBox.warning(self, "Uyarı", "Kategori bulunamadı.")
                 return
             isim, parent_id = row
             parent_name = None
@@ -3202,7 +3752,7 @@ class AnaPencere(QMainWindow):
             reply = QMessageBox.question(
                 self,
                 "Kategoriyi Sil",
-                f"'{isim}' kategorisini silmek Ã¼zeresiniz. Bu kategori altÄ±ndaki projeler '{hedef}' kategorisine taÅŸÄ±nacaktÄ±r. Devam etmek istiyor musunuz?",
+                f"'{isim}' kategorisini silmek üzeresiniz. Bu kategori altındaki projeler '{hedef}' kategorisine taşınacaktır. Devam etmek istiyor musunuz?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -3213,17 +3763,17 @@ class AnaPencere(QMainWindow):
             success = self.db.kategoriyi_sil(kategori_id)
             if success:
                 self._invalidate_filter_cache_and_reload()
-                QMessageBox.information(self, "BaÅŸarÄ±lÄ±", "Kategori silindi ve projeler yeniden atandÄ±.")
+                QMessageBox.information(self, "Başarılı", "Kategori silindi ve projeler yeniden atandı.")
             else:
-                QMessageBox.critical(self, "Hata", "Kategori silinirken hata oluÅŸtu.")
+                QMessageBox.critical(self, "Hata", "Kategori silinirken hata oluştu.")
         except Exception as e:
-            self.logger.error(f"Kategori silme hatasÄ±: {e}", exc_info=True)
+            self.logger.error(f"Kategori silme hatası: {e}", exc_info=True)
             QMessageBox.critical(self, "Hata", f"Beklenmedik hata: {e}")
 
     def _get_item_path(self, item: QTreeWidgetItem) -> str:
-        # Bu fonksiyon artÄ±k KategoriAgaci tarafÄ±ndan kullanÄ±lmÄ±yor,
-        # ancak ne olur ne olmaz diye (belki baÅŸka bir yerde kullanÄ±lÄ±r)
-        # bÄ±rakÄ±yoruz.
+        # Bu fonksiyon artık KategoriAgaci tarafından kullanılmıyor,
+        # ancak ne olur ne olmaz diye (belki başka bir yerde kullanılır)
+        # bırakıyoruz.
         yol_parcalari = []
         gecerli_item = item
         while gecerli_item:
@@ -3232,30 +3782,30 @@ class AnaPencere(QMainWindow):
             gecerli_item = gecerli_item.parent()
         return "/".join(yol_parcalari)
 
-    # --- GÃœNCELLEME (ADIM 5.3) ---
-    # Fonksiyon artÄ±k 'hiyerarsi_yolu' (str) yerine 'kategori_id' (int) alÄ±yor
+    # --- GÜNCELLEME (ADIM 5.3) ---
+    # Fonksiyon artık 'hiyerarsi_yolu' (str) yerine 'kategori_id' (int) alıyor
     def _context_menu_yeni_proje(self, kategori_id: Optional[int] = None):
-        # _proje_penceresi_yonet'e 'hiyerarsi' metni yerine 'kategori_id' gÃ¶nder
+        # _proje_penceresi_yonet'e 'hiyerarsi' metni yerine 'kategori_id' gönder
         on_veri = {"kategori_id": kategori_id}
         self._proje_penceresi_yonet(on_veri=on_veri)
 
-    # --- GÃœNCELLEME BÄ°TTÄ° ---
+    # --- GÜNCELLEME BİTTİ ---
 
     def _context_menu_yeni_kategori(self, parent_kategori_id: Optional[int] = None):
-        """Context menÃ¼den yeni kategori oluÅŸturma iÅŸlemi.
+        """Context menüden yeni kategori oluşturma işlemi.
 
-        parent_kategori_id: None veya Ã¼st kategori ID'si (0/None => root)
+        parent_kategori_id: None veya üst kategori ID'si (0/None => root)
         """
-        # Ä°sim sor
-        isim, ok = QInputDialog.getText(self, "Yeni Kategori", "Kategori adÄ±:")
+        # İsim sor
+        isim, ok = QInputDialog.getText(self, "Yeni Kategori", "Kategori adı:")
         if not ok:
             return
         isim = (isim or "").strip()
         if not isim:
-            QMessageBox.warning(self, "UyarÄ±", "Kategori adÄ± boÅŸ olamaz.")
+            QMessageBox.warning(self, "Uyarı", "Kategori adı boş olamaz.")
             return
 
-        # Parent ID: None olarak veritabanÄ±na iletilmeli (0 => None)
+        # Parent ID: None olarak veritabanına iletilmeli (0 => None)
         db_parent = (
             parent_kategori_id
             if parent_kategori_id and parent_kategori_id > 0
@@ -3279,14 +3829,14 @@ class AnaPencere(QMainWindow):
 
                 # Color and emoji maps for project statuses
                 durum_renk_map = {
-                    Durum.ONAYLI.value: QColor("#d4edda"),  # YeÅŸil background
+                    Durum.ONAYLI.value: QColor("#d4edda"),  # Yeşil background
                     Durum.ONAYLI_NOTLU.value: QColor("#fff3cd"),  # Turuncu background
-                    Durum.REDDEDILDI.value: QColor("#f8d7da"),  # KÄ±rmÄ±zÄ± background
-                    "Onaysiz": QColor("#f0f0f0"),  # AÃ§Ä±k gri background
+                    Durum.REDDEDILDI.value: QColor("#f8d7da"),  # Kırmızı background
+                    "Onaysiz": QColor("#f0f0f0"),  # Açık gri background
                 }
                 durum_emoji_map = {
-                    Durum.ONAYLI.value: "âœ…",
-                    Durum.ONAYLI_NOTLU.value: "ğŸ“",
+                    Durum.ONAYLI.value: "✅",
+                    Durum.ONAYLI_NOTLU.value: "📝",
                     Durum.REDDEDILDI.value: "âŒ",
                     "Onaysiz": "â­•",
                 }
@@ -3330,22 +3880,22 @@ class AnaPencere(QMainWindow):
                 self.proje_agaci_widget.expandAll()
             except Exception as e:
                 self.logger.error(
-                    f"Kategori aÄŸacÄ± yÃ¼klenirken hata: {e}", exc_info=True
+                    f"Kategori ağacı yüklenirken hata: {e}", exc_info=True
                 )
             finally:
                 self.proje_agaci_widget.setUpdatesEnabled(True)
 
     def _revizyon_islem_baslat(self, islem_turu):
         """
-        Revizyon onaylama/reddetme iÅŸlemi - AYNI REVÄ°ZYON KODUNA YENÄ° SATIR EKLER!
-        Mevcut gelen yazÄ± revizyonuna, giden yazÄ± olarak yeni satÄ±r ekler.
+        Revizyon onaylama/reddetme işlemi - AYNI REVİZYON KODUNA YENİ SATIR EKLER!
+        Mevcut gelen yazı revizyonuna, giden yazı olarak yeni satır ekler.
         """
         item = self._get_secili_revizyon_item()
         if not item:
             return QMessageBox.warning(
                 self,
-                "Revizyon SeÃ§ilmedi",
-                f"{islem_turu}lama iÅŸlemi iÃ§in bir revizyon seÃ§in.",
+                "Revizyon Seçilmedi",
+                f"{islem_turu}lama işlemi için bir revizyon seçin.",
             )
 
         rev: RevizyonModel = item.data(0, Qt.UserRole)
@@ -3353,7 +3903,7 @@ class AnaPencere(QMainWindow):
         proje_id = self.secili_proje_id
 
         if not proje_id:
-            return QMessageBox.warning(self, "Hata", "Proje seÃ§ili deÄŸil.")
+            return QMessageBox.warning(self, "Hata", "Proje seçili değil.")
 
         mevcut_yazilar = (
             self.db.mevcut_onay_yazilarini_getir()
@@ -3361,7 +3911,7 @@ class AnaPencere(QMainWindow):
             else self.db.mevcut_red_yazilarini_getir()
         )
 
-        # --- YENÄ° Ã‡Ã–KME DÃœZELTMESÄ°: ZamanlayÄ±cÄ±yÄ± diyalog aÃ§Ä±lmadan durdur ---
+        # --- YENİ ÇÖKME DÜZELTMESİ: Zamanlayıcıyı diyalog açılmadan durdur ---
         self.preview_timer.stop()
         self.letter_preview_timer.stop()
         dialog = OnayRedDialog(self, islem_turu, mevcut_yazilar)
@@ -3370,13 +3920,13 @@ class AnaPencere(QMainWindow):
             veri = dialog.get_data()
             yazi_turu_db = "onay" if islem_turu in ["Onay", "Notlu Onay"] else "red"
 
-            # Giden yazÄ± dokÃ¼manÄ±nÄ± kaydet
+            # Giden yazı dokümanını kaydet
             if veri.get("dosya_yolu"):
                 try:
                     with open(veri["dosya_yolu"], "rb") as f:
                         yazi_dok_veri = f.read()
                     if self._confirm_if_suspicious_letter_doc(
-                        rev_id, yazi_dok_veri, f"{islem_turu.lower()} yazÄ±sÄ±"
+                        rev_id, yazi_dok_veri, f"{islem_turu.lower()} yazısı"
                     ):
                         self.db.yazi_dokumani_kaydet(
                             veri["yazi_no"],
@@ -3388,13 +3938,13 @@ class AnaPencere(QMainWindow):
                 except Exception as e:
                     QMessageBox.warning(
                         self,
-                        "YazÄ± KayÄ±t HatasÄ±",
-                        f"{islem_turu} yazÄ±sÄ± kaydedilemedi: {e}",
+                        "Yazı Kayıt Hatası",
+                        f"{islem_turu} yazısı kaydedilemedi: {e}",
                     )
 
             try:
-                # AYNI REVÄ°ZYON KODUNA YENÄ° SATIR EKLE (giden yazÄ±)
-                ayni_rev_kodu = rev.revizyon_kodu  # AynÄ± revizyon kodunu kullan
+                # AYNI REVİZYON KODUNA YENİ SATIR EKLE (giden yazı)
+                ayni_rev_kodu = rev.revizyon_kodu  # Aynı revizyon kodunu kullan
 
                 # Durum belirle
                 if islem_turu == "Onay":
@@ -3404,61 +3954,47 @@ class AnaPencere(QMainWindow):
                 else:  # Red
                     yeni_durum = Durum.REDDEDILDI.value
 
-                # AÃ§Ä±klama
+                # Açıklama
                 aciklama = (
-                    f"{islem_turu} YazÄ±sÄ±: {veri['yazi_no']} tarihli {veri['tarih']}"
+                    f"{islem_turu} Yazısı: {veri['yazi_no']} tarihli {veri['tarih']}"
                 )
 
-                # Mevcut revizyonun dokÃ¼manÄ±nÄ± kopyala (aynÄ± dosya)
+                # Mevcut revizyonun dokümanını kopyala (aynı dosya)
                 mevcut_dokuman = self.db.dokumani_getir(rev_id)
                 if not mevcut_dokuman:
                     QMessageBox.warning(
-                        self, "Hata", "Mevcut revizyonun dokÃ¼manÄ± bulunamadÄ±!"
+                        self, "Hata", "Mevcut revizyonun dokümanı bulunamadı!"
                     )
                     return
 
-                # Yeni: kullanÄ±cÄ±nÄ±n mevcut dokÃ¼man bytes'Ä±nÄ± doÄŸrudan DB'ye gÃ¶nder
+                # Yeni: kullanıcının mevcut doküman bytes'ını doğrudan DB'ye gönder
                 try:
-                    yeni_rev_id = self.db.mevcut_projeye_revizyon_ekle(
-                        proje_id,
-                        ayni_rev_kodu,
-                        (
+                    yeni_rev_id, yeni_durum = self.db.mevcut_projeye_giden_yazi_revizyonu_ekle(
+                        proje_id=proje_id,
+                        revizyon_kodu=ayni_rev_kodu,
+                        dosya_adi=(
                             os.path.basename(mevcut_dokuman[0])
                             if mevcut_dokuman[0]
                             else None
                         ),
-                        aciklama,
-                        "giden",  # yazi_turu
-                        yeni_durum,
                         dosya_verisi=mevcut_dokuman[1],
+                        islem_turu=islem_turu,
+                        yazi_no=veri["yazi_no"],
+                        yazi_tarih=veri["tarih"],
                     )
 
-                    # Onay/Red yazÄ± bilgilerini gÃ¼ncelle
-                    if islem_turu in ["Onay", "Notlu Onay"]:
-                        self.db.cursor.execute(
-                            "UPDATE revizyonlar SET onay_yazi_no = ?, onay_yazi_tarih = ? WHERE id = ?",
-                            (veri["yazi_no"], veri["tarih"], yeni_rev_id),
-                        )
-                    else:  # Red
-                        self.db.cursor.execute(
-                            "UPDATE revizyonlar SET red_yazi_no = ?, red_yazi_tarih = ? WHERE id = ?",
-                            (veri["yazi_no"], veri["tarih"], yeni_rev_id),
-                        )
-
-                    self.db.conn.commit()
-
                     self.logger.info(
-                        f"AynÄ± revizyona {islem_turu} yazÄ±sÄ± eklendi: Proje ID {proje_id}, Rev {ayni_rev_kodu}"
+                        f"Aynı revizyona {islem_turu} yazısı eklendi: Proje ID {proje_id}, Rev {ayni_rev_kodu}"
                     )
 
                     QMessageBox.information(
                         self,
-                        "BaÅŸarÄ±lÄ±",
-                        f"âœ… Giden yazÄ± eklendi!\n\n"
+                        "Başarılı",
+                        f"✅ Giden yazı eklendi!\n\n"
                         f"Revizyon Kodu: {ayni_rev_kodu}\n"
                         f"Durum: {yeni_durum}\n"
-                        f"YazÄ± No: {veri['yazi_no']}\n\n"
-                        f"ğŸ“¤ AynÄ± revizyona giden yazÄ± olarak eklendi.",
+                        f"Yazı No: {veri['yazi_no']}\n\n"
+                        f"📤 Aynı revizyona giden yazı olarak eklendi.",
                     )
 
                 finally:
@@ -3467,11 +4003,11 @@ class AnaPencere(QMainWindow):
 
             except Exception as e:
                 self.logger.critical(
-                    f"Revizyon {islem_turu} hatasÄ±: {e}", exc_info=True
+                    f"Revizyon {islem_turu} hatası: {e}", exc_info=True
                 )
-                QMessageBox.critical(self, "Hata", f"Giden yazÄ± eklenemedi: {e}")
+                QMessageBox.critical(self, "Hata", f"Giden yazı eklenemedi: {e}")
 
-            # Listeyi gÃ¼ncellerken mevcut proje ve yeni/aynÄ± revizyon seÃ§imini koru
+            # Listeyi güncellerken mevcut proje ve yeni/aynı revizyon seçimini koru
             try:
                 # Ensure project selection stays pinned
                 self.secili_proje_id = proje_id
@@ -3484,19 +4020,19 @@ class AnaPencere(QMainWindow):
                     self.yenile(keep_rev_id=target_rev_id if "target_rev_id" in locals() else None, keep_project_id=proje_id)
 
     def revizyon_durumunu_degistir(self):
-        # ... (deÄŸiÅŸiklik yok) ...
+        # ... (değişiklik yok) ...
         item = self._get_secili_revizyon_item()
         if not item:
             return QMessageBox.warning(
                 self,
-                "Revizyon SeÃ§ilmedi",
-                "LÃ¼tfen durumunu dÃ¼zeltmek iÃ§in bir revizyon seÃ§in.",
+                "Revizyon Seçilmedi",
+                "Lütfen durumunu düzeltmek için bir revizyon seçin.",
             )
         rev: RevizyonModel = item.data(0, Qt.UserRole)
         mevcut_kod = rev.revizyon_kodu
         mevcut_durum = rev.durum
 
-        # --- YENÄ° Ã‡Ã–KME DÃœZELTMESÄ°: ZamanlayÄ±cÄ±yÄ± durdur ---
+        # --- YENİ ÇÖKME DÜZELTMESİ: Zamanlayıcıyı durdur ---
         self.preview_timer.stop()
         self.letter_preview_timer.stop()
         dialog = DurumDegistirDialog(self, mevcut_durum, mevcut_kod)
@@ -3507,19 +4043,19 @@ class AnaPencere(QMainWindow):
             yeni_kod = veri["yeni_kod"]
             if yeni_durum == mevcut_durum and yeni_kod == mevcut_kod:
                 return QMessageBox.information(
-                    self, "DeÄŸiÅŸiklik Yok", "Durum veya kod deÄŸiÅŸtirilmedi."
+                    self, "Değişiklik Yok", "Durum veya kod değiştirilmedi."
                 )
 
-            # --- YENÄ° Ã‡Ã–KME DÃœZELTMESÄ°: ZamanlayÄ±cÄ±yÄ± durdur ---
+            # --- YENİ ÇÖKME DÜZELTMESİ: Zamanlayıcıyı durdur ---
             self.preview_timer.stop()
             self.letter_preview_timer.stop()
             yanit = QMessageBox.warning(
                 self,
                 "Onay Gerekli",
                 f"Revizyon '{mevcut_kod}' ({mevcut_durum}) durumundan\n"
-                f"'{yeni_kod}' ({yeni_durum}) durumuna geÃ§irilecek.\n\n"
-                "<b>Bu iÅŸlem revizyonun durumunu ve kodunu deÄŸiÅŸtirecektir; mevcut onay/red/gelen yazÄ±larÄ± korunacaktÄ±r.</b>\n\n"
-                "Devam etmek istediÄŸinizden emin misiniz?",
+                f"'{yeni_kod}' ({yeni_durum}) durumuna geçirilecek.\n\n"
+                "<b>Bu işlem revizyonun durumunu ve kodunu değiştirecektir; mevcut onay/red/gelen yazıları korunacaktır.</b>\n\n"
+                "Devam etmek istediğinizden emin misiniz?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -3532,10 +4068,10 @@ class AnaPencere(QMainWindow):
                     if basarili:
                         QMessageBox.information(
                             self,
-                            "BaÅŸarÄ±lÄ±",
-                            "Revizyon durumu ve kodu baÅŸarÄ±yla dÃ¼zeltildi.",
+                            "Başarılı",
+                            "Revizyon durumu ve kodu başarıyla düzeltildi.",
                         )
-                        # Yenileme sÄ±rasÄ±nda mevcut proje/revizyon seÃ§imini koru
+                        # Yenileme sırasında mevcut proje/revizyon seçimini koru
                         try:
                             if not getattr(self, "secili_proje_id", None):
                                 self.secili_proje_id = rev.proje_id if hasattr(rev, "proje_id") else self.secili_proje_id
@@ -3547,17 +4083,17 @@ class AnaPencere(QMainWindow):
                                 self.yenile(keep_rev_id=rev.id, keep_project_id=self.secili_proje_id)
                     else:
                         QMessageBox.critical(
-                            self, "Hata", "VeritabanÄ± gÃ¼ncellenirken bir hata oluÅŸtu."
+                            self, "Hata", "Veritabanı güncellenirken bir hata oluştu."
                         )
                 except Exception as e:
-                    # --- LOG GÃœNCELLEMESÄ° ---
+                    # --- LOG GÜNCELLEMESİ ---
                     self.logger.critical(
-                        f"Revizyon durum dÃ¼zeltme hatasÄ±: {e}", exc_info=True
+                        f"Revizyon durum düzeltme hatası: {e}", exc_info=True
                     )
                     QMessageBox.critical(
                         self,
                         "Kritik Hata",
-                        f"DÃ¼zeltme iÅŸlemi sÄ±rasÄ±nda beklenmedik bir hata oluÅŸtu: {e}",
+                        f"Düzeltme işlemi sırasında beklenmedik bir hata oluştu: {e}",
                     )
 
     def _dosya_kaydet_dialog(self, dosya_adi, dosya_verisi):
@@ -3589,7 +4125,7 @@ class AnaPencere(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Bilgi",
-                "Bu revizyon iÃ§in iliÅŸkilendirilmiÅŸ bir gelen yazÄ± numarasÄ± yok.",
+                "Bu revizyon için ilişkilendirilmiş bir gelen yazı numarası yok.",
             )
             return
 
@@ -3598,7 +4134,7 @@ class AnaPencere(QMainWindow):
             rev_data.gelen_yazi_tarih,
             "gelen",
         )
-        self.file_service.download_letter_document(dokuman, yazi_no, "gelen yazÄ±")
+        self.file_service.download_letter_document(dokuman, yazi_no, "gelen yazı")
 
     def onay_red_yazisini_indir(self):
         """Download the selected revision's approval/rejection letter document."""
@@ -3631,13 +4167,13 @@ class AnaPencere(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Bilgi",
-                f"Bu revizyon iÃ§in iliÅŸkilendirilmiÅŸ bir {yazi_tipi_str} yazÄ±sÄ± numarasÄ± yok.",
+                f"Bu revizyon için ilişkilendirilmiş bir {yazi_tipi_str} yazısı numarası yok.",
             )
             return
 
         dokuman = self.db.yazi_dokumani_getir(yazi_no, yazi_tarih, yazi_dok_turu)
         self.file_service.download_letter_document(
-            dokuman, yazi_no, f"{yazi_tipi_str} yazÄ±"
+            dokuman, yazi_no, f"{yazi_tipi_str} yazı"
         )
 
     def revizyon_takip_notu_ekle_duzenle(self):
@@ -3712,7 +4248,7 @@ class AnaPencere(QMainWindow):
         """Export revision tracking list to Excel."""
         if not self.report_service:
             QMessageBox.critical(
-                self, "Hata", "Rapor servisi baÅŸlatÄ±lamadÄ±. Excel aktarÄ±mÄ± yapÄ±lamadÄ±."
+                self, "Hata", "Rapor servisi başlatılamadı. Excel aktarımı yapılamadı."
             )
             return
         self.report_service.export_revision_tracking_to_excel()
@@ -3732,32 +4268,32 @@ class AnaPencere(QMainWindow):
         )
 
     def projeleri_klasore_cikar(self):
-        """TÃ¼m projeleri seÃ§ilen klasÃ¶re hiyerarÅŸik yapÄ±da Ã§Ä±kar."""
+        """Tüm projeleri seçilen klasöre hiyerarşik yapıda çıkar."""
         from dialogs.export_dialog import ProjectExportDialog
         dialog = ProjectExportDialog(self.db.db_adi, self)
         dialog.exec()
 
     def manuel_yedek_al(self):
-        """Manuel olarak veritabanÄ± yedeÄŸi al"""
+        """Manuel olarak veritabanı yedeği al"""
         try:
             yedek_dosya = self.db.otomatik_yedek_al("Manuel")
             if yedek_dosya:
                 QMessageBox.information(
                     self,
-                    "Yedek AlÄ±ndÄ±",
-                    f"VeritabanÄ± yedeÄŸi baÅŸarÄ±yla alÄ±ndÄ±:\n\n{yedek_dosya}\n\n"
-                    f"Yedek klasÃ¶rÃ¼: {self.db.yedek_klasoru}",
+                    "Yedek Alındı",
+                    f"Veritabanı yedeği başarıyla alındı:\n\n{yedek_dosya}\n\n"
+                    f"Yedek klasörü: {self.db.yedek_klasoru}",
                 )
-                self.logger.info(f"Manuel yedek alÄ±ndÄ±: {yedek_dosya}")
+                self.logger.info(f"Manuel yedek alındı: {yedek_dosya}")
             else:
                 QMessageBox.warning(
                     self,
                     "Hata",
-                    "Yedek alÄ±nÄ±rken bir hata oluÅŸtu. LÃ¼tfen log dosyasÄ±nÄ± kontrol edin.",
+                    "Yedek alınırken bir hata oluştu. Lütfen log dosyasını kontrol edin.",
                 )
         except Exception as e:
-            self.logger.error(f"Manuel yedek alma hatasÄ±: {e}")
-            QMessageBox.critical(self, "Hata", f"Yedek alma hatasÄ±: {e}")
+            self.logger.error(f"Manuel yedek alma hatası: {e}")
+            QMessageBox.critical(self, "Hata", f"Yedek alma hatası: {e}")
 
     def rapor_olustur(self):
         """Generate PDF report - delegate to ReportService."""
@@ -3770,13 +4306,13 @@ class AnaPencere(QMainWindow):
 
             if not yedekler:
                 QMessageBox.information(
-                    self, "Yedek BulunamadÄ±", "HenÃ¼z hiÃ§ yedek alÄ±nmamÄ±ÅŸ."
+                    self, "Yedek Bulunamadı", "Henüz hiç yedek alınmamış."
                 )
                 return
 
-            # Dialog oluÅŸtur
+            # Dialog oluştur
             dialog = QDialog(self)
-            dialog.setWindowTitle("VeritabanÄ± Yedekleri")
+            dialog.setWindowTitle("Veritabanı Yedekleri")
             dialog.setMinimumSize(700, 400)
 
             layout = QVBoxLayout(dialog)
@@ -3785,13 +4321,13 @@ class AnaPencere(QMainWindow):
             info_label = QLabel(f"Toplam {len(yedekler)} adet yedek bulundu:")
             layout.addWidget(info_label)
 
-            # Tablo oluÅŸtur
+            # Tablo oluştur
             from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
 
             table = QTableWidget()
             table.setColumnCount(4)
             table.setHorizontalHeaderLabels(
-                ["Dosya AdÄ±", "Tarih", "Boyut (KB)", "Tam Yol"]
+                ["Dosya Adı", "Tarih", "Boyut (KB)", "Tam Yol"]
             )
             table.setRowCount(len(yedekler))
             table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -3803,7 +4339,7 @@ class AnaPencere(QMainWindow):
                 table.setItem(i, 2, QTableWidgetItem(f"{yedek['boyut_kb']:.2f}"))
                 table.setItem(i, 3, QTableWidgetItem(yedek["dosya"]))
 
-            # SÃ¼tun geniÅŸliklerini ayarla
+            # Sütun genişliklerini ayarla
             header = table.horizontalHeader()
             header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
             header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -3823,31 +4359,31 @@ class AnaPencere(QMainWindow):
             dialog.exec()
 
         except Exception as e:
-            self.logger.error(f"Yedek listeleme hatasÄ±: {e}")
-            QMessageBox.critical(self, "Hata", f"Yedek listeleme hatasÄ±: {e}")
+            self.logger.error(f"Yedek listeleme hatası: {e}")
+            QMessageBox.critical(self, "Hata", f"Yedek listeleme hatası: {e}")
 
     def yedekten_geri_yukle_dialog(self):
-        """Yedekten geri yÃ¼kleme dialogu"""
+        """Yedekten geri yükleme dialogu"""
         try:
             yedekler = self.db.yedekleri_listele()
 
             if not yedekler:
                 QMessageBox.information(
-                    self, "Yedek BulunamadÄ±", "Geri yÃ¼klenecek yedek bulunamadÄ±."
+                    self, "Yedek Bulunamadı", "Geri yüklenecek yedek bulunamadı."
                 )
                 return
 
-            # Dialog oluÅŸtur
+            # Dialog oluştur
             dialog = QDialog(self)
-            dialog.setWindowTitle("Yedekten Geri YÃ¼kle")
+            dialog.setWindowTitle("Yedekten Geri Yükle")
             dialog.setMinimumSize(700, 450)
 
             layout = QVBoxLayout(dialog)
 
-            # UyarÄ± etiketi
+            # Uyarı etiketi
             warning_label = QLabel(
-                "âš ï¸ <b>DÄ°KKAT:</b> Bu iÅŸlem mevcut veritabanÄ±nÄ± seÃ§ilen yedek ile deÄŸiÅŸtirecektir.\\n"
-                "Devam etmeden Ã¶nce mevcut durumun yedeÄŸini almanÄ±z Ã¶nerilir."
+                "⚠️ <b>DİKKAT:</b> Bu işlem mevcut veritabanını seçilen yedek ile değiştirecektir.\\n"
+                "Devam etmeden önce mevcut durumun yedeğini almanız önerilir."
             )
             warning_label.setStyleSheet(
                 "QLabel { background-color: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 5px; }"
@@ -3855,12 +4391,12 @@ class AnaPencere(QMainWindow):
             warning_label.setWordWrap(True)
             layout.addWidget(warning_label)
 
-            # Tablo oluÅŸtur
+            # Tablo oluştur
             from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
 
             table = QTableWidget()
             table.setColumnCount(3)
-            table.setHorizontalHeaderLabels(["Dosya AdÄ±", "Tarih", "Boyut (KB)"])
+            table.setHorizontalHeaderLabels(["Dosya Adı", "Tarih", "Boyut (KB)"])
             table.setRowCount(len(yedekler))
             table.setEditTriggers(QTableWidget.NoEditTriggers)
             table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -3873,7 +4409,7 @@ class AnaPencere(QMainWindow):
                 # Yedek dosya yolunu row data olarak sakla
                 table.item(i, 0).setData(Qt.UserRole, yedek["dosya"])
 
-            # SÃ¼tun geniÅŸliklerini ayarla
+            # Sütun genişliklerini ayarla
             header = table.horizontalHeader()
             header.setSectionResizeMode(0, QHeaderView.Stretch)
             header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -3883,16 +4419,16 @@ class AnaPencere(QMainWindow):
 
             # Butonlar
             button_layout = QHBoxLayout()
-            restore_btn = QPushButton("Geri YÃ¼kle")
+            restore_btn = QPushButton("Geri Yükle")
             restore_btn.setStyleSheet(
                 "QPushButton { background-color: #28a745; color: white; padding: 5px 15px; }"
             )
-            cancel_btn = QPushButton("Ä°ptal")
+            cancel_btn = QPushButton("İptal")
 
             def on_restore():
                 selected_rows = table.selectedItems()
                 if not selected_rows:
-                    QMessageBox.warning(dialog, "UyarÄ±", "LÃ¼tfen bir yedek seÃ§in.")
+                    QMessageBox.warning(dialog, "Uyarı", "Lütfen bir yedek seçin.")
                     return
 
                 yedek_dosya = table.item(selected_rows[0].row(), 0).data(Qt.UserRole)
@@ -3901,30 +4437,30 @@ class AnaPencere(QMainWindow):
                 reply = QMessageBox.question(
                     dialog,
                     "Onay",
-                    f"Bu yedeÄŸi geri yÃ¼klemek istediÄŸinizden emin misiniz?\\n\\n"
+                    f"Bu yedeği geri yüklemek istediğinizden emin misiniz?\\n\\n"
                     f"{yedek_dosya}\\n\\n"
-                    "Mevcut veritabanÄ± deÄŸiÅŸtirilecektir!",
+                    "Mevcut veritabanı değiştirilecektir!",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No,
                 )
 
                 if reply == QMessageBox.Yes:
-                    # Geri yÃ¼kleme yap
+                    # Geri yükleme yap
                     if self.db.yedekten_geri_yukle(yedek_dosya):
                         QMessageBox.information(
                             dialog,
-                            "BaÅŸarÄ±lÄ±",
-                            "VeritabanÄ± baÅŸarÄ±yla geri yÃ¼klendi.\\n\\n"
-                            "LÃ¼tfen uygulamayÄ± yeniden baÅŸlatÄ±n.",
+                            "Başarılı",
+                            "Veritabanı başarıyla geri yüklendi.\\n\\n"
+                            "Lütfen uygulamayı yeniden başlatın.",
                         )
                         dialog.accept()
-                        # UygulamayÄ± kapat
+                        # Uygulamayı kapat
                         self.close()
                     else:
                         QMessageBox.critical(
                             dialog,
                             "Hata",
-                            "Geri yÃ¼kleme baÅŸarÄ±sÄ±z oldu. LÃ¼tfen log dosyasÄ±nÄ± kontrol edin.",
+                            "Geri yükleme başarısız oldu. Lütfen log dosyasını kontrol edin.",
                         )
 
             restore_btn.clicked.connect(on_restore)
@@ -3938,64 +4474,64 @@ class AnaPencere(QMainWindow):
             dialog.exec()
 
         except Exception as e:
-            self.logger.error(f"Geri yÃ¼kleme dialog hatasÄ±: {e}")
-            QMessageBox.critical(self, "Hata", f"Geri yÃ¼kleme hatasÄ±: {e}")
+            self.logger.error(f"Geri yükleme dialog hatası: {e}")
+            QMessageBox.critical(self, "Hata", f"Geri yükleme hatası: {e}")
 
     # =============================================================================
-    # VERÄ°TABANI DOSYASI YÃ–NETÄ°MÄ°
+    # VERİTABANI DOSYASI YÖNETİMİ
     # =============================================================================
 
     def _son_kullanilan_dosya_kaydet(self):
-        """Mevcut veritabanÄ± dosyasÄ±nÄ± son kullanÄ±lanlar listesine ekle"""
+        """Mevcut veritabanı dosyasını son kullanılanlar listesine ekle"""
         try:
             settings = QSettings(APP_NAME, APP_NAME)
 
-            # Son kullanÄ±lan dosyayÄ± kaydet
+            # Son kullanılan dosyayı kaydet
             settings.setValue("database/last_file", self.current_db_file)
 
-            # Son kullanÄ±lan dosyalar listesini al
+            # Son kullanılan dosyalar listesini al
             recent_files = settings.value("database/recent_files", [])
             if not isinstance(recent_files, list):
                 recent_files = []
 
-            # Mevcut dosyayÄ± listenin baÅŸÄ±na ekle
+            # Mevcut dosyayı listenin başına ekle
             if self.current_db_file in recent_files:
                 recent_files.remove(self.current_db_file)
             recent_files.insert(0, self.current_db_file)
 
-            # Son 5 dosyayÄ± tut
+            # Son 5 dosyayı tut
             recent_files = recent_files[:5]
 
             # Kaydet
             settings.setValue("database/recent_files", recent_files)
 
-            # MenÃ¼yÃ¼ gÃ¼ncelle
+            # Menüyü güncelle
             self._son_kullanilan_dosyalari_guncelle()
 
         except Exception as e:
-            self.logger.warning(f"Son kullanÄ±lan dosya kaydedilemedi: {e}")
+            self.logger.warning(f"Son kullanılan dosya kaydedilemedi: {e}")
 
     def _son_kullanilan_dosyalari_guncelle(self):
-        """Son kullanÄ±lan dosyalar menÃ¼sÃ¼nÃ¼ gÃ¼ncelle"""
+        """Son kullanılan dosyalar menüsünü güncelle"""
         try:
             if not hasattr(self, "son_dosyalar_menu"):
                 return
 
-            # MenÃ¼yÃ¼ temizle
+            # Menüyü temizle
             self.son_dosyalar_menu.clear()
 
-            # Son kullanÄ±lan dosyalarÄ± al
+            # Son kullanılan dosyaları al
             settings = QSettings(APP_NAME, APP_NAME)
             recent_files = settings.value("database/recent_files", [])
             if not isinstance(recent_files, list):
                 recent_files = []
 
-            # Var olan dosyalarÄ± filtrele
+            # Var olan dosyaları filtrele
             valid_files = [f for f in recent_files if os.path.exists(f)]
 
             if valid_files:
                 for db_file in valid_files:
-                    # Dosya adÄ± ve yolunu gÃ¶ster
+                    # Dosya adı ve yolunu göster
                     file_name = os.path.basename(db_file)
                     # file_dir is not used; removed unused variable
 
@@ -4003,37 +4539,37 @@ class AnaPencere(QMainWindow):
                     action.setToolTip(db_file)
                     action.setStatusTip(db_file)
 
-                    # Mevcut dosya ise iÅŸaretle
+                    # Mevcut dosya ise işaretle
                     if db_file == self.current_db_file:
                         action.setEnabled(False)
-                        action.setText(f"â— {file_name} (AÃ§Ä±k)")
+                        action.setText(f"● {file_name} (Açık)")
 
                     action.triggered.connect(
                         lambda checked, path=db_file: self._veritabani_degistir(path)
                     )
                     self.son_dosyalar_menu.addAction(action)
 
-                # Listeyi temizle seÃ§eneÄŸi
+                # Listeyi temizle seçeneği
                 self.son_dosyalar_menu.addSeparator()
                 clear_action = QAction("Listeyi Temizle", self)
                 clear_action.triggered.connect(self._son_kullanilan_listesini_temizle)
                 self.son_dosyalar_menu.addAction(clear_action)
             else:
-                # Liste boÅŸ
-                empty_action = QAction("(BoÅŸ)", self)
+                # Liste boş
+                empty_action = QAction("(Boş)", self)
                 empty_action.setEnabled(False)
                 self.son_dosyalar_menu.addAction(empty_action)
 
         except Exception as e:
-            self.logger.warning(f"Son kullanÄ±lan dosyalar menÃ¼sÃ¼ gÃ¼ncellenemedi: {e}")
+            self.logger.warning(f"Son kullanılan dosyalar menüsü güncellenemedi: {e}")
 
     def _son_kullanilan_listesini_temizle(self):
-        """Son kullanÄ±lan dosyalar listesini temizle"""
+        """Son kullanılan dosyalar listesini temizle"""
         try:
             reply = QMessageBox.question(
                 self,
                 "Listeyi Temizle",
-                "Son kullanÄ±lan dosyalar listesini temizlemek istediÄŸinizden emin misiniz?",
+                "Son kullanılan dosyalar listesini temizlemek istediğinizden emin misiniz?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -4042,9 +4578,9 @@ class AnaPencere(QMainWindow):
                 settings = QSettings(APP_NAME, APP_NAME)
                 settings.setValue("database/recent_files", [])
                 self._son_kullanilan_dosyalari_guncelle()
-                QMessageBox.information(self, "BaÅŸarÄ±lÄ±", "Liste temizlendi.")
+                QMessageBox.information(self, "Başarılı", "Liste temizlendi.")
         except Exception as e:
-            self.logger.error(f"Liste temizleme hatasÄ±: {e}")
+            self.logger.error(f"Liste temizleme hatası: {e}")
 
     def _update_excel_loader_path(self):
         """Update Excel loader service path to match current database location."""
@@ -4067,29 +4603,29 @@ class AnaPencere(QMainWindow):
             self.logger.warning(f"Excel loader path update failed: {e}")
 
     def yeni_veritabani_olustur(self):
-        """Yeni bir veritabanÄ± dosyasÄ± oluÅŸtur"""
+        """Yeni bir veritabanı dosyası oluştur"""
         try:
-            # Dosya adÄ± sor
+            # Dosya adı sor
             dosya_yolu, _ = QFileDialog.getSaveFileName(
                 self,
-                "Yeni VeritabanÄ± OluÅŸtur",
+                "Yeni Veritabanı Oluştur",
                 "",
-                "SQLite VeritabanÄ± (*.db);;TÃ¼m Dosyalar (*.*)",
+                "SQLite Veritabanı (*.db);;Tüm Dosyalar (*.*)",
             )
 
             if not dosya_yolu:
-                return  # Ä°ptal edildi
+                return  # İptal edildi
 
-            # .db uzantÄ±sÄ± yoksa ekle
+            # .db uzantısı yoksa ekle
             if not dosya_yolu.endswith(".db"):
                 dosya_yolu += ".db"
 
-            # Dosya zaten var mÄ± kontrol et
+            # Dosya zaten var mı kontrol et
             if os.path.exists(dosya_yolu):
                 reply = QMessageBox.question(
                     self,
                     "Dosya Mevcut",
-                    f"'{os.path.basename(dosya_yolu)}' zaten mevcut.\n\nÃœzerine yazmak istiyor musunuz?",
+                    f"'{os.path.basename(dosya_yolu)}' zaten mevcut.\n\nÜzerine yazmak istiyor musunuz?",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No,
                 )
@@ -4097,77 +4633,77 @@ class AnaPencere(QMainWindow):
                 if reply == QMessageBox.No:
                     return
 
-                # Eski dosyayÄ± sil
+                # Eski dosyayı sil
                 try:
                     os.remove(dosya_yolu)
                 except Exception as e:
                     QMessageBox.critical(self, "Hata", f"Dosya silinemedi: {e}")
                     return
 
-            # Yeni veritabanÄ±na geÃ§
+            # Yeni veritabanına geç
             self._veritabani_degistir(dosya_yolu)
 
             QMessageBox.information(
                 self,
-                "BaÅŸarÄ±lÄ±",
-                f"Yeni veritabanÄ± oluÅŸturuldu:\n\n{dosya_yolu}\n\n"
-                "Åimdi bu veritabanÄ± ile Ã§alÄ±ÅŸabilirsiniz.",
+                "Başarılı",
+                f"Yeni veritabanı oluşturuldu:\n\n{dosya_yolu}\n\n"
+                "Şimdi bu veritabanı ile çalışabilirsiniz.",
             )
 
         except Exception as e:
-            self.logger.error(f"Yeni veritabanÄ± oluÅŸturma hatasÄ±: {e}", exc_info=True)
-            QMessageBox.critical(self, "Hata", f"Yeni veritabanÄ± oluÅŸturulamadÄ±:\n{e}")
+            self.logger.error(f"Yeni veritabanı oluşturma hatası: {e}", exc_info=True)
+            QMessageBox.critical(self, "Hata", f"Yeni veritabanı oluşturulamadı:\n{e}")
 
     def veritabani_ac(self):
-        """Mevcut bir veritabanÄ± dosyasÄ± aÃ§"""
+        """Mevcut bir veritabanı dosyası aç"""
         try:
-            # Dosya seÃ§
+            # Dosya seç
             dosya_yolu, _ = QFileDialog.getOpenFileName(
                 self,
-                "VeritabanÄ± AÃ§",
+                "Veritabanı Aç",
                 "",
-                "SQLite VeritabanÄ± (*.db);;TÃ¼m Dosyalar (*.*)",
+                "SQLite Veritabanı (*.db);;Tüm Dosyalar (*.*)",
             )
 
             if not dosya_yolu:
-                return  # Ä°ptal edildi
+                return  # İptal edildi
 
-            # Dosya var mÄ± kontrol et
+            # Dosya var mı kontrol et
             if not os.path.exists(dosya_yolu):
-                QMessageBox.critical(self, "Hata", "SeÃ§ilen dosya bulunamadÄ±.")
+                QMessageBox.critical(self, "Hata", "Seçilen dosya bulunamadı.")
                 return
 
-            # VeritabanÄ±na geÃ§
+            # Veritabanına geç
             self._veritabani_degistir(dosya_yolu)
 
         except Exception as e:
-            self.logger.error(f"VeritabanÄ± aÃ§ma hatasÄ±: {e}", exc_info=True)
-            QMessageBox.critical(self, "Hata", f"VeritabanÄ± aÃ§Ä±lamadÄ±:\n{e}")
+            self.logger.error(f"Veritabanı açma hatası: {e}", exc_info=True)
+            QMessageBox.critical(self, "Hata", f"Veritabanı açılamadı:\n{e}")
 
     def _veritabani_degistir(self, yeni_dosya_yolu):
-        """Aktif veritabanÄ±nÄ± deÄŸiÅŸtir"""
+        """Aktif veritabanını değiştir"""
         try:
             # Mutlak yol
             yeni_dosya_yolu = os.path.abspath(yeni_dosya_yolu)
 
-            # AynÄ± dosya ise iÅŸlem yapma
+            # Aynı dosya ise işlem yapma
             if yeni_dosya_yolu == self.current_db_file:
-                QMessageBox.information(self, "Bilgi", "Bu veritabanÄ± zaten aÃ§Ä±k.")
+                QMessageBox.information(self, "Bilgi", "Bu veritabanı zaten açık.")
                 return
 
-            # Mevcut deÄŸiÅŸiklikleri kontrol et
+            # Mevcut değişiklikleri kontrol et
             if hasattr(self, "db") and self.db.degisiklik_var_mi():
                 reply = QMessageBox.question(
                     self,
-                    "KaydedilmemiÅŸ DeÄŸiÅŸiklikler",
-                    f"Mevcut veritabanÄ±nda {self.db._degisiklik_sayisi} kaydedilmemiÅŸ deÄŸiÅŸiklik var.\n\n"
-                    "DeÄŸiÅŸtirmeden Ã¶nce kaydetmek ister misiniz?",
+                    "Kaydedilmemiş Değişiklikler",
+                    f"Mevcut veritabanında {self.db._degisiklik_sayisi} kaydedilmemiş değişiklik var.\n\n"
+                    "Değiştirmeden önce kaydetmek ister misiniz?",
                     QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
                     QMessageBox.Yes,
                 )
 
                 if reply == QMessageBox.Cancel:
-                    return  # Ä°ptal
+                    return  # İptal
                 elif reply == QMessageBox.Yes:
                     # Kaydet
                     try:
@@ -4179,106 +4715,137 @@ class AnaPencere(QMainWindow):
                                 pass
                         self.db.degisiklikleri_sifirla()
                     except Exception as e:
-                        QMessageBox.warning(self, "UyarÄ±", f"Kaydetme hatasÄ±: {e}")
+                        QMessageBox.warning(self, "Uyarı", f"Kaydetme hatası: {e}")
 
-            # Eski veritabanÄ±nÄ± kapat
+            old_db = getattr(self, "db", None)
+            old_db_file = self.current_db_file
+            new_db = ProjeTakipDB(yeni_dosya_yolu)
+            auth_rebound = False
             try:
-                if hasattr(self, "db"):
-                    if hasattr(self.db, "close"):
-                        self.db.close()
-                    else:
-                        self.db.cleanup_connections()
-                        self.db.conn.close()
-            except Exception as e:
-                self.logger.warning(f"Eski veritabanÄ± kapatma uyarÄ±sÄ±: {e}")
-            # Yeni veritabanÄ±nÄ± aÃ§
-            self.current_db_file = yeni_dosya_yolu
-            self.db = ProjeTakipDB(self.current_db_file)
+                if getattr(self, "auth_service", None):
+                    self.auth_service.bind_db(new_db)
+                    auth_rebound = True
 
-            # Update Excel loader path for new database location
-            self._update_excel_loader_path()
+                self.current_db_file = yeni_dosya_yolu
+                self.db = new_db
 
-            # Update dependent components that keep a reference to db
-            try:
-                if getattr(self, "controller", None):
-                    # Controller uses self.window.db property now; ensure its filter_manager reference is current
-                    self.controller.filter_manager = self.filter_manager
+                # Update Excel loader path for new database location
+                self._update_excel_loader_path()
+
+                # Update dependent components that keep a reference to db
+                try:
+                    if getattr(self, "controller", None):
+                        # Controller uses self.window.db property now; ensure its filter_manager reference is current
+                        self.controller.filter_manager = self.filter_manager
+                except Exception:
+                    pass
+                try:
+                    if getattr(self, "filter_manager", None):
+                        self.filter_manager.db = self.db
+                except Exception:
+                    pass
+                try:
+                    if getattr(self, "report_service", None):
+                        self.report_service.db = self.db
+                except Exception:
+                    pass
+
+                # UI'ı sıfırla ve yeniden yükle
+                self.secili_proje_id = None
+                self.tum_projeler = []
+
+                # Cache'leri temizle
+                self._cache_temizle()
+
+                # Projeleri yükle
+                self.projeleri_yukle()
+
+                # Pencere başlığını güncelle
+                self._update_window_title()
+                self._update_user_status_label()
+                self._heartbeat_presence()
+
+                # Son kullanılan dosyayı kaydet
+                self._son_kullanilan_dosya_kaydet()
+
+                # Kullanıcıyı bilgilendir
+                if hasattr(self, "_status"):
+                    try:
+                        db_name = os.path.basename(self.current_db_file)
+                    except Exception:
+                        db_name = self.current_db_file
+                    self._status.showMessage(f"Veritabanı değiştirildi: {db_name}", 5000)
+
+                self.logger.info(f"Veritabanı değiştirildi: {self.current_db_file}")
+
+                try:
+                    if old_db:
+                        if hasattr(old_db, "close"):
+                            old_db.close()
+                        else:
+                            old_db.cleanup_connections()
+                            old_db.conn.close()
+                except Exception as e:
+                    self.logger.warning(f"Eski veritabanı kapatma uyarısı: {e}")
             except Exception:
-                pass
-            try:
-                if getattr(self, "filter_manager", None):
-                    self.filter_manager.db = self.db
-            except Exception:
-                pass
-            try:
-                if getattr(self, "report_service", None):
-                    self.report_service.db = self.db
-            except Exception:
-                pass
-
-            # UI'Ä± sÄ±fÄ±rla ve yeniden yÃ¼kle
-            self.secili_proje_id = None
-            self.tum_projeler = []
-
-            # Cache'leri temizle
-            self._cache_temizle()
-
-            # Projeleri yÃ¼kle
-            self.projeleri_yukle()
-
-            # Pencere baÅŸlÄ±ÄŸÄ±nÄ± gÃ¼ncelle
-            self._update_window_title()
-
-            # Son kullanÄ±lan dosyayÄ± kaydet
-            self._son_kullanilan_dosya_kaydet()
-
-            # KullanÄ±cÄ±yÄ± bilgilendir
-            if hasattr(self, "_status"):
-                self._status.showMessage(f"VeritabanÄ± deÄŸiÅŸtirildi: {db_name}", 5000)
-
-            self.logger.info(f"VeritabanÄ± deÄŸiÅŸtirildi: {self.current_db_file}")
+                self.current_db_file = old_db_file
+                self.db = old_db
+                try:
+                    if auth_rebound and getattr(self, "auth_service", None) and old_db is not None:
+                        self.auth_service.bind_db(old_db)
+                except Exception as rollback_error:
+                    self.logger.critical(
+                        "Auth service eski veritabanına döndürülemedi: %s",
+                        rollback_error,
+                        exc_info=True,
+                    )
+                try:
+                    new_db.close()
+                except Exception:
+                    pass
+                raise
 
         except Exception as e:
-            self.logger.error(f"VeritabanÄ± deÄŸiÅŸtirme hatasÄ±: {e}", exc_info=True)
+            self.logger.error(f"Veritabanı değiştirme hatası: {e}", exc_info=True)
             QMessageBox.critical(
                 self,
                 "Kritik Hata",
-                f"VeritabanÄ± deÄŸiÅŸtirilemedi:\n\n{e}\n\n"
-                "Uygulama yeniden baÅŸlatÄ±labilir.",
+                f"Veritabanı değiştirilemedi:\n\n{e}\n\n"
+                "Uygulama yeniden başlatılabilir.",
             )
 
-            # Eski veritabanÄ±na geri dÃ¶nmeye Ã§alÄ±ÅŸ
             try:
-                if self.current_db_file != yeni_dosya_yolu:
-                    self.db = ProjeTakipDB(self.current_db_file)
-                    self.projeleri_yukle()
+                if getattr(self, "db", None) is not None:
+                    self._update_window_title()
+                    self._update_user_status_label()
+                    self._update_presence_status_label()
             except Exception:
                 pass
 
     def yeni_proje_penceresi(self):
-        """Yeni proje oluÅŸturma penceresini aÃ§"""
+        """Yeni proje oluşturma penceresini aç"""
         self._proje_penceresi_yonet()
 
     def _proje_penceresi_yonet(self, proje_id=None, on_veri=None):
-        """Proje ekleme/dÃ¼zenleme penceresini yÃ¶net"""
+        """Proje ekleme/düzenleme penceresini yönet"""
         try:
-            # Dialog aÃ§Ä±lmadan Ã¶nce timer'Ä± durdur
+            # Dialog açılmadan önce timer'ı durdur
             if hasattr(self, "preview_timer"):
                 self.preview_timer.stop()
                 self.letter_preview_timer.stop()
 
-            # Kategorileri hazÄ±rla
-            # ProjeDialog (id, "Tam/Yol") formatÄ±nda liste bekliyor
+            # Kategorileri hazırla
+            # ProjeDialog (id, "Tam/Yol") formatında liste bekliyor
             kategoriler_raw = self.db.get_kategoriler()
             kategori_listesi = []
             for kat_id, kat_isim, _ in kategoriler_raw:
                 yol = self.db.get_kategori_yolu(kat_id)
                 kategori_listesi.append((kat_id, yol))
 
-            # Listeyi yola gÃ¶re sÄ±rala
+            # Listeyi yola göre sırala
             kategori_listesi.sort(key=lambda x: x[1])
 
-            # on_veri hazÄ±rla
+            # on_veri hazırla
             dialog_data = on_veri or {}
             if proje_id:
                 proje = self.db.proje_bul_id_ile(proje_id)
@@ -4313,13 +4880,13 @@ class AnaPencere(QMainWindow):
                             QMessageBox.critical(
                                 self,
                                 "Hata",
-                                "Proje gÃ¼ncellenemedi. Kod zaten mevcut olabilir.",
+                                "Proje güncellenemedi. Kod zaten mevcut olabilir.",
                             )
                             return
-                        self.logger.info(f"Proje gÃ¼ncellendi: {veri['kod']}")
+                        self.logger.info(f"Proje güncellendi: {veri['kod']}")
                     except Exception as e:
-                        self.logger.error(f"Proje gÃ¼ncelleme hatasÄ±: {e}")
-                        QMessageBox.critical(self, "Hata", f"Proje gÃ¼ncellenemedi: {e}")
+                        self.logger.error(f"Proje güncelleme hatası: {e}")
+                        QMessageBox.critical(self, "Hata", f"Proje güncellenemedi: {e}")
                         return
                 else:
                     try:
@@ -4333,42 +4900,42 @@ class AnaPencere(QMainWindow):
                             QMessageBox.critical(
                                 self,
                                 "Hata",
-                                "Proje oluÅŸturulamadÄ±. Kod zaten mevcut olabilir.",
+                                "Proje oluşturulamadı. Kod zaten mevcut olabilir.",
                             )
                             return
                         proje_id = new_project_id
-                        self.logger.info(f"Yeni proje oluÅŸturuldu: {veri['kod']}")
+                        self.logger.info(f"Yeni proje oluşturuldu: {veri['kod']}")
                     except Exception as e:
-                        self.logger.error(f"Proje oluÅŸturma hatasÄ±: {e}")
-                        QMessageBox.critical(self, "Hata", f"Proje oluÅŸturulamadÄ±: {e}")
+                        self.logger.error(f"Proje oluşturma hatası: {e}")
+                        QMessageBox.critical(self, "Hata", f"Proje oluşturulamadı: {e}")
                         return
 
-                # BaÅŸarÄ±lÄ± ise listeyi yenile ve filtre cache temizle
+                # Başarılı ise listeyi yenile ve filtre cache temizle
                 self._invalidate_filter_cache_and_reload()
 
-                # Yeni eklenen/dÃ¼zenlenen projeyi seÃ§
+                # Yeni eklenen/düzenlenen projeyi seç
                 if proje_id:
                     self.secili_proje_id = proje_id
-                    # Listede bul ve seÃ§ (basitÃ§e yenileme sonrasÄ± seÃ§im koruma mantÄ±ÄŸÄ± eklenebilir)
+                    # Listede bul ve seç (basitçe yenileme sonrası seçim koruma mantığı eklenebilir)
 
         except Exception as e:
-            self.logger.error(f"Proje penceresi hatasÄ±: {e}", exc_info=True)
-            QMessageBox.critical(self, "Hata", f"Ä°ÅŸlem sÄ±rasÄ±nda hata oluÅŸtu: {e}")
+            self.logger.error(f"Proje penceresi hatası: {e}", exc_info=True)
+            QMessageBox.critical(self, "Hata", f"İşlem sırasında hata oluştu: {e}")
 
     def proje_duzenleme_penceresi(self):
-        """SeÃ§ili projeyi dÃ¼zenle"""
+        """Seçili projeyi düzenle"""
         # Permission check
-        if not self._check_write_permission("proje dÃ¼zenlemek"):
+        if not self._check_write_permission("proje düzenlemek"):
             return
         if not self.secili_proje_id:
-            QMessageBox.warning(self, "UyarÄ±", "LÃ¼tfen dÃ¼zenlenecek projeyi seÃ§in.")
+            QMessageBox.warning(self, "Uyarı", "Lütfen düzenlenecek projeyi seçin.")
             return
         self._proje_penceresi_yonet(proje_id=self.secili_proje_id)
 
     def dosyadan_proje_olustur(self):
-        """Dosya isminden proje oluÅŸtur"""
+        """Dosya isminden proje oluştur"""
         dosyalar, _ = QFileDialog.getOpenFileNames(
-            self, "Dosyadan Proje OluÅŸtur", "", "TÃ¼m Dosyalar (*.*)"
+            self, "Dosyadan Proje Oluştur", "", "Tüm Dosyalar (*.*)"
         )
         if not dosyalar:
             return
@@ -4376,9 +4943,25 @@ class AnaPencere(QMainWindow):
         hatali_dosyalar = []
 
         files_info = []
+        intelligence_service = self.document_intelligence_service
         for dosya_yolu in dosyalar:
             dosya_adi = os.path.basename(dosya_yolu)
             bilgi = dosyadan_proje_bilgisi_cikar(dosya_adi) or {}
+            yazi_bilgisi = {}
+            warning_parts = []
+            if intelligence_service is not None:
+                try:
+                    belge_bilgisi = intelligence_service.analyze_project_document(dosya_yolu)
+                except Exception as e:
+                    self.logger.debug("Belge analizi başarısız (%s): %s", dosya_yolu, e)
+                    belge_bilgisi = {}
+
+                if belge_bilgisi.get("kod") and not bilgi.get("kod"):
+                    bilgi["kod"] = belge_bilgisi["kod"]
+                if belge_bilgisi.get("isim") and not bilgi.get("isim"):
+                    bilgi["isim"] = belge_bilgisi["isim"]
+                if belge_bilgisi.get("source_note"):
+                    warning_parts.append(belge_bilgisi["source_note"])
             files_info.append(
                 {
                     "dosya_adi": dosya_adi,
@@ -4391,6 +4974,9 @@ class AnaPencere(QMainWindow):
                     "gelen_yazi_tarih": bilgi.get("gelen_yazi_tarih", ""),
                     "mevcut": bool(self.db.proje_var_mi(bilgi.get("kod", ""))),
                     "yeni_revizyon_kodu": "",
+                    "uyari": " | ".join(
+                        [part for part in warning_parts if part]
+                    ),
                 }
             )
 
@@ -4427,9 +5013,9 @@ class AnaPencere(QMainWindow):
                     )
                     eklenen_projeler.append(res.get("kod"))
                 except Exception as e:
-                    self.logger.error(f"Revizyon ekleme hatasÄ± (bulk): {e}")
+                    self.logger.error(f"Revizyon ekleme hatası (bulk): {e}")
                     hatali_dosyalar.append(
-                        f"{res.get('dosya_adi')} (rev ekleme hatasÄ±: {e})"
+                        f"{res.get('dosya_adi')} (rev ekleme hatası: {e})"
                     )
             else:
                 try:
@@ -4446,19 +5032,19 @@ class AnaPencere(QMainWindow):
                     if new:
                         eklenen_projeler.append(res.get("kod"))
                 except Exception as e:
-                    self.logger.error(f"Yeni proje ekleme hatasÄ± (bulk): {e}")
+                    self.logger.error(f"Yeni proje ekleme hatası (bulk): {e}")
                     hatali_dosyalar.append(
-                        f"{res.get('dosya_adi')} (proje ekleme hatasÄ±: {e})"
+                        f"{res.get('dosya_adi')} (proje ekleme hatası: {e})"
                     )
 
         if eklenen_projeler:
             self._invalidate_filter_cache_and_reload()
             QMessageBox.information(
-                self, "Ä°ÅŸlem TamamlandÄ±", f"{len(eklenen_projeler)} proje iÅŸlendi."
+                self, "İşlem Tamamlandı", f"{len(eklenen_projeler)} proje işlendi."
             )
         if hatali_dosyalar:
             QMessageBox.warning(
-                self, "BazÄ± Dosyalar Ä°ÅŸlenemedi", f"{len(hatali_dosyalar)} dosya iÅŸlenemedi: {', '.join(hatali_dosyalar)}"
+                self, "Bazı Dosyalar İşlenemedi", f"{len(hatali_dosyalar)} dosya işlenemedi: {', '.join(hatali_dosyalar)}"
             )
 
     def yeni_revizyon_yukle(self):
@@ -4468,12 +5054,12 @@ class AnaPencere(QMainWindow):
             return
         if not self.secili_proje_id:
             QMessageBox.warning(
-                self, "UyarÄ±", "LÃ¼tfen revizyon eklenecek projeyi seÃ§in."
+                self, "Uyarı", "Lütfen revizyon eklenecek projeyi seçin."
             )
             return
 
         try:
-            # Dialog aÃ§Ä±lmadan Ã¶nce timer'Ä± durdur
+            # Dialog açılmadan önce timer'ı durdur
             if hasattr(self, "preview_timer"):
                 self.preview_timer.stop()
                 self.letter_preview_timer.stop()
@@ -4481,12 +5067,12 @@ class AnaPencere(QMainWindow):
             # Projeyi bul
             proje = self.db.proje_bul_id_ile(self.secili_proje_id)
             if not proje:
-                QMessageBox.critical(self, "Hata", "Proje bulunamadÄ±.")
+                QMessageBox.critical(self, "Hata", "Proje bulunamadı.")
                 return
 
             proje_kodu = proje[1]  # proje_kodu
 
-            # Mevcut gelen yazÄ±larÄ± al
+            # Mevcut gelen yazıları al
             mevcut_yazilar = self.db.mevcut_gelen_yazilari_getir()
 
             # First ask which revision code to use (like bulk/file flow)
@@ -4533,16 +5119,18 @@ class AnaPencere(QMainWindow):
                         yazi_turu,
                         Durum.ONAYSIZ.value,
                         dosya_verisi=dosya_verisi,
+                        yazi_konu=veri.get("yazi_konu"),
+                        yazi_kurum=veri.get("yazi_kurum"),
                     )
 
                     if rev_id:
-                        # If there are yazÄ± numbers, update the new revision entry accordingly
+                        # If there are yazı numbers, update the new revision entry accordingly
                         if yazi_turu == "gelen" and veri.get("gelen_yazi_no"):
                             sql = "UPDATE revizyonlar SET gelen_yazi_no = ?, gelen_yazi_tarih = ? WHERE id = ?"
                             params = (veri.get("gelen_yazi_no"), veri.get("gelen_yazi_tarih"), rev_id)
                             # running update sql
                             self.db.cursor.execute(sql, params)
-                            # Save gelen yazÄ± dokÃ¼manÄ± if provided
+                            # Save gelen yazı dokümanı if provided
                             if veri.get("yeni_yazi_dosya_yolu"):
                                 try:
                                     with open(veri["yeni_yazi_dosya_yolu"], "rb") as f:
@@ -4554,14 +5142,14 @@ class AnaPencere(QMainWindow):
                                             "gelen",
                                             veri.get("gelen_yazi_tarih"),
                                         )
-                                    self.logger.info(f"Gelen yazÄ± dokÃ¼manÄ± kaydedildi: {res}, yazi_no={veri.get('gelen_yazi_no')} (rev_kodu={veri.get('revizyon_kodu')})")
+                                    self.logger.info(f"Gelen yazı dokümanı kaydedildi: {res}, yazi_no={veri.get('gelen_yazi_no')} (rev_kodu={veri.get('revizyon_kodu')})")
                                     # Render the yazi for preview
                                     try:
                                         self._start_yazi_render.emit(dok_veri, self.zoom_factor, veri.get("gelen_yazi_no"))
                                     except Exception:
                                         self.logger.debug("_start_yazi_render emit failed in new rev flow", exc_info=True)
                                 except Exception as e:
-                                    self.logger.error(f"Gelen yazÄ± dokÃ¼manÄ± kaydedilemedi: {e}", exc_info=True)
+                                    self.logger.error(f"Gelen yazı dokümanı kaydedilemedi: {e}", exc_info=True)
                                     raise
                         elif yazi_turu == "giden":
                             if veri.get("onay_yazi_no"):
@@ -4573,7 +5161,7 @@ class AnaPencere(QMainWindow):
                                     with open(veri["yeni_onay_dosya_yolu"], "rb") as f:
                                         onay_dok_veri = f.read()
                                     if self._confirm_if_suspicious_letter_doc(
-                                        rev_id, onay_dok_veri, "onay yazÄ±sÄ±"
+                                        rev_id, onay_dok_veri, "onay yazısı"
                                     ):
                                         self.db.yazi_dokumani_kaydet(
                                             veri.get("onay_yazi_no"),
@@ -4591,7 +5179,7 @@ class AnaPencere(QMainWindow):
                                     with open(veri["yeni_red_dosya_yolu"], "rb") as f:
                                         red_dok_veri = f.read()
                                     if self._confirm_if_suspicious_letter_doc(
-                                        rev_id, red_dok_veri, "red yazÄ±sÄ±"
+                                        rev_id, red_dok_veri, "red yazısı"
                                     ):
                                         self.db.yazi_dokumani_kaydet(
                                             veri.get("red_yazi_no"),
@@ -4602,9 +5190,9 @@ class AnaPencere(QMainWindow):
                                         )
 
                         self.db.conn.commit()
-                        QMessageBox.information(self, "BaÅŸarÄ±lÄ±", "Yeni revizyon eklendi.")
+                        QMessageBox.information(self, "Başarılı", "Yeni revizyon eklendi.")
                 except Exception as e:
-                    self.logger.error(f"Revizyon ekleme hatasÄ±: {e}", exc_info=True)
+                    self.logger.error(f"Revizyon ekleme hatası: {e}", exc_info=True)
                     QMessageBox.critical(self, "Hata", f"Yeni revizyon eklenemedi: {e}")
 
                 # Refresh lists and clear filter cache after DB write - preserve new revision selection
@@ -4615,18 +5203,18 @@ class AnaPencere(QMainWindow):
                     self._invalidate_filter_cache_and_reload(keep_project_id=self.secili_proje_id)
 
         except Exception as e:
-            self.logger.error(f"Revizyon ekleme hatasÄ±: {e}", exc_info=True)
-            QMessageBox.critical(self, "Hata", f"Revizyon eklenirken hata oluÅŸtu: {e}")
+            self.logger.error(f"Revizyon ekleme hatası: {e}", exc_info=True)
+            QMessageBox.critical(self, "Hata", f"Revizyon eklenirken hata oluştu: {e}")
 
     def arayuzden_revizyonu_duzenle(self):
-        """SeÃ§ili revizyonu dÃ¼zenle - yeni sisteme uyumlu"""
+        """Seçili revizyonu düzenle - yeni sisteme uyumlu"""
         # Permission check
-        if not self._check_write_permission("revizyon dÃ¼zenlemek"):
+        if not self._check_write_permission("revizyon düzenlemek"):
             return
         
         item = self._get_secili_revizyon_item()
         if not item:
-            QMessageBox.warning(self, "UyarÄ±", "LÃ¼tfen dÃ¼zenlenecek revizyonu seÃ§in.")
+            QMessageBox.warning(self, "Uyarı", "Lütfen düzenlenecek revizyonu seçin.")
             return
 
         rev: RevizyonModel = item.data(0, Qt.UserRole)
@@ -4634,7 +5222,7 @@ class AnaPencere(QMainWindow):
             return
 
         try:
-            # Dialog aÃ§Ä±lmadan Ã¶nce timer'Ä± durdur
+            # Dialog açılmadan önce timer'ı durdur
             if hasattr(self, "preview_timer"):
                 self.preview_timer.stop()
                 self.letter_preview_timer.stop()
@@ -4642,12 +5230,12 @@ class AnaPencere(QMainWindow):
             # Projeyi bul
             proje = self.db.proje_bul_id_ile(self.secili_proje_id)
             if not proje:
-                QMessageBox.critical(self, "Hata", "Proje bulunamadÄ±.")
+                QMessageBox.critical(self, "Hata", "Proje bulunamadı.")
                 return
 
             # proje_kodu not needed here; avoid unused local variable
 
-            # Revizyon verilerini hazÄ±rla
+            # Revizyon verilerini hazırla
             on_veri = {
                 "id": rev.id,
                 "aciklama": rev.aciklama or "",
@@ -4659,9 +5247,11 @@ class AnaPencere(QMainWindow):
                 "red_yazi_no": rev.red_yazi_no,
                 "red_yazi_tarih": rev.red_yazi_tarih,
                 "tse_gonderildi": rev.tse_gonderildi,
+                "yazi_konu": rev.yazi_konu,
+                "yazi_kurum": rev.yazi_kurum,
             }
 
-            # TSE bilgileri varsa ekle (database'den Ã§ekilmeli)
+            # TSE bilgileri varsa ekle (database'den çekilmeli)
             try:
                 tse_bilgisi = self.db.cursor.execute(
                     "SELECT tse_yazi_no, tse_yazi_tarih FROM revizyonlar WHERE id = ?",
@@ -4673,13 +5263,13 @@ class AnaPencere(QMainWindow):
             except Exception:
                 pass
 
-            # Mevcut yazÄ±larÄ± al (yazi_turu'ya gÃ¶re)
+            # Mevcut yazıları al (yazi_turu'ya göre)
             if rev.yazi_turu == "gelen":
                 mevcut_yazilar = self.db.mevcut_gelen_yazilari_getir()
             else:  # giden veya yok
                 mevcut_yazilar = {}
 
-            # Revizyon dÃ¼zenleme dialogu aÃ§
+            # Revizyon düzenleme dialogu aç
             dialog = YeniRevizyonDialog(
                 self,
                 rev.revizyon_kodu,
@@ -4692,11 +5282,11 @@ class AnaPencere(QMainWindow):
                 # Dialog'dan verileri al
                 veri = dialog.get_data()
                 try:
-                    self.logger.debug(f"Revizyon dÃ¼zenleme dialog sonucu: {veri}")
+                    self.logger.debug(f"Revizyon düzenleme dialog sonucu: {veri}")
                 except Exception:
                     pass
 
-                # Deduce new yazÄ± tÃ¼rÃ¼ from the dialog's submitted data (in case it changed)
+                # Deduce new yazı türü from the dialog's submitted data (in case it changed)
                 yeni_yazi_turu = rev.yazi_turu or "yok"
                 if veri.get("gelen_yazi_no"):
                     yeni_yazi_turu = "gelen"
@@ -4718,20 +5308,20 @@ class AnaPencere(QMainWindow):
                         pass
 
         except Exception as e:
-            self.logger.error(f"Revizyon dÃ¼zenleme hatasÄ±: {e}", exc_info=True)
+            self.logger.error(f"Revizyon düzenleme hatası: {e}", exc_info=True)
             QMessageBox.critical(
-                self, "Hata", f"Revizyon dÃ¼zenlenirken hata oluÅŸtu: {e}"
+                self, "Hata", f"Revizyon düzenlenirken hata oluştu: {e}"
             )
 
     def _revizyon_guncelle_db(self, rev_id, veri, yazi_turu):
-        """Revizyon verilerini veritabanÄ±nda gÃ¼ncelle"""
+        """Revizyon verilerini veritabanında güncelle"""
         # Permission check (defensive)
         if not self.auth_service.has_permission('write'):
             self.logger.warning("Unauthorized attempt to update revision")
             return
         
         try:
-            # Temel alanlarÄ± gÃ¼ncelle (revizyon_kodu dahil)
+            # Temel alanları güncelle (revizyon_kodu dahil)
             self.db.cursor.execute(
                 """
                 UPDATE revizyonlar 
@@ -4739,7 +5329,9 @@ class AnaPencere(QMainWindow):
                     aciklama = ?,
                     tse_gonderildi = ?,
                     tse_yazi_no = ?,
-                    tse_yazi_tarih = ?
+                    tse_yazi_tarih = ?,
+                    yazi_konu = ?,
+                    yazi_kurum = ?
                 WHERE id = ?
             """,
                 (
@@ -4748,11 +5340,13 @@ class AnaPencere(QMainWindow):
                     veri.get("tse_gonderildi", 0),
                     veri.get("tse_yazi_no"),
                     veri.get("tse_yazi_tarih"),
+                    veri.get("yazi_konu"),
+                    veri.get("yazi_kurum"),
                     rev_id,
                 ),
             )
 
-            # Gelen yazÄ± alanlarÄ±nÄ± gÃ¼ncelle (sadece gelen tÃ¼rÃ¼ndeyse)
+            # Gelen yazı alanlarını güncelle (sadece gelen türündeyse)
             if yazi_turu == "gelen":
                 self.db.cursor.execute(
                     """
@@ -4765,7 +5359,7 @@ class AnaPencere(QMainWindow):
                     (veri.get("gelen_yazi_no"), veri.get("gelen_yazi_tarih"), rev_id),
                 )
 
-                # Gelen yazÄ± dokÃ¼manÄ± gÃ¼ncellemesi varsa
+                # Gelen yazı dokümanı güncellemesi varsa
                 if veri.get("yeni_yazi_dosya_yolu"):
                     # Ensure we have a yazi_no; try to infer from filename if missing
                     yazi_no = veri.get("gelen_yazi_no")
@@ -4781,11 +5375,11 @@ class AnaPencere(QMainWindow):
                                     "UPDATE revizyonlar SET gelen_yazi_no = ?, gelen_yazi_tarih = ? WHERE id = ?",
                                     (yazi_no, bilgiler.get("tarih"), rev_id),
                                 )
-                                self.logger.info(f"Gelen yazÄ± no filename'dan tahmin edildi: {yazi_no} (rev_id={rev_id})")
+                                self.logger.info(f"Gelen yazı no filename'dan tahmin edildi: {yazi_no} (rev_id={rev_id})")
                         except Exception:
                             pass
                     if not yazi_no:
-                        self.logger.warning(f"Gelen yazÄ± dosyasÄ± seÃ§ilmiÅŸ ancak gelen_yazi_no boÅŸ. Dosya kaydedilmeyecek: {veri.get('yeni_yazi_dosya_yolu')}")
+                        self.logger.warning(f"Gelen yazı dosyası seçilmiş ancak gelen_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_yazi_dosya_yolu')}")
                     else:
                         try:
                             with open(veri["yeni_yazi_dosya_yolu"], "rb") as f:
@@ -4797,7 +5391,7 @@ class AnaPencere(QMainWindow):
                                     "gelen",
                                     veri.get("gelen_yazi_tarih"),
                                 )
-                                self.logger.info(f"Gelen yazÄ± dokÃ¼manÄ± kaydedildi: yazi_no={yazi_no}, result={saved}, rev_id={rev_id}")
+                                self.logger.info(f"Gelen yazı dokümanı kaydedildi: yazi_no={yazi_no}, result={saved}, rev_id={rev_id}")
                                 # Trigger preview for the uploaded letter doc if available
                                 try:
                                     if hasattr(self, "_start_yazi_render"):
@@ -4805,7 +5399,7 @@ class AnaPencere(QMainWindow):
                                 except Exception:
                                     self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
                         except Exception as e:
-                            self.logger.error(f"Gelen yazÄ± dokÃ¼manÄ± kaydedilemedi: {e}", exc_info=True)
+                            self.logger.error(f"Gelen yazı dokümanı kaydedilemedi: {e}", exc_info=True)
                             # Trigger preview for the uploaded letter doc if available
                             try:
                                 if hasattr(self, "_start_yazi_render"):
@@ -4813,9 +5407,9 @@ class AnaPencere(QMainWindow):
                             except Exception:
                                 self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
 
-            # Giden yazÄ± alanlarÄ±nÄ± gÃ¼ncelle (sadece giden tÃ¼rÃ¼ndeyse)
+            # Giden yazı alanlarını güncelle (sadece giden türündeyse)
             elif yazi_turu == "giden":
-                # Onay yazÄ±sÄ± gÃ¼ncellemesi
+                # Onay yazısı güncellemesi
                 if veri.get("onay_yazi_no"):
                     self.db.cursor.execute(
                         """
@@ -4840,21 +5434,21 @@ class AnaPencere(QMainWindow):
                                             "UPDATE revizyonlar SET onay_yazi_no = ?, onay_yazi_tarih = ? WHERE id = ?",
                                             (onay_no, bilgiler.get("tarih"), rev_id),
                                         )
-                                        self.logger.info(f"Onay yazÄ± no filename'dan tahmin edildi: {onay_no} (rev_id={rev_id})")
+                                        self.logger.info(f"Onay yazı no filename'dan tahmin edildi: {onay_no} (rev_id={rev_id})")
                                 except Exception:
                                     pass
                             if not onay_no:
-                                self.logger.warning(f"Onay yazÄ±sÄ± dosyasÄ± seÃ§ilmiÅŸ ancak onay_yazi_no boÅŸ. Dosya kaydedilmeyecek: {veri.get('yeni_onay_dosya_yolu')}")
+                                self.logger.warning(f"Onay yazısı dosyası seçilmiş ancak onay_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_onay_dosya_yolu')}")
                             else:
                                 dok_veri = None
                                 try:
                                     with open(veri["yeni_onay_dosya_yolu"], "rb") as f:
                                         dok_veri = f.read()
                                         if not self._confirm_if_suspicious_letter_doc(
-                                            rev_id, dok_veri, "onay yazÄ±sÄ±"
+                                            rev_id, dok_veri, "onay yazısı"
                                         ):
                                             self.logger.info(
-                                                f"ÅÃ¼pheli onay yazÄ±sÄ± yÃ¼kleme kullanÄ±cÄ± tarafÄ±ndan iptal edildi (rev_id={rev_id})"
+                                                f"Şüpheli onay yazısı yükleme kullanıcı tarafından iptal edildi (rev_id={rev_id})"
                                             )
                                             dok_veri = None
                                     if dok_veri is not None:
@@ -4871,7 +5465,7 @@ class AnaPencere(QMainWindow):
                                         except Exception:
                                             self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
                                 except Exception as e:
-                                    self.logger.error(f"Onay yazÄ± dokÃ¼manÄ± kaydedilemedi: {e}", exc_info=True)
+                                    self.logger.error(f"Onay yazı dokümanı kaydedilemedi: {e}", exc_info=True)
                                 # Trigger preview if possible
                                 try:
                                     if dok_veri is not None and hasattr(self, "_start_yazi_render"):
@@ -4879,7 +5473,7 @@ class AnaPencere(QMainWindow):
                                 except Exception:
                                     self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
 
-                # Red yazÄ±sÄ± gÃ¼ncellemesi
+                # Red yazısı güncellemesi
                 if veri.get("red_yazi_no"):
                     self.db.cursor.execute(
                         """
@@ -4904,21 +5498,21 @@ class AnaPencere(QMainWindow):
                                             "UPDATE revizyonlar SET red_yazi_no = ?, red_yazi_tarih = ? WHERE id = ?",
                                             (red_no, bilgiler.get("tarih"), rev_id),
                                         )
-                                        self.logger.info(f"Red yazÄ± no filename'dan tahmin edildi: {red_no} (rev_id={rev_id})")
+                                        self.logger.info(f"Red yazı no filename'dan tahmin edildi: {red_no} (rev_id={rev_id})")
                                 except Exception:
                                     pass
                             if not red_no:
-                                self.logger.warning(f"Red yazÄ±sÄ± dosyasÄ± seÃ§ilmiÅŸ ancak red_yazi_no boÅŸ. Dosya kaydedilmeyecek: {veri.get('yeni_red_dosya_yolu')}")
+                                self.logger.warning(f"Red yazısı dosyası seçilmiş ancak red_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_red_dosya_yolu')}")
                             else:
                                 dok_veri = None
                                 try:
                                     with open(veri["yeni_red_dosya_yolu"], "rb") as f:
                                         dok_veri = f.read()
                                         if not self._confirm_if_suspicious_letter_doc(
-                                            rev_id, dok_veri, "red yazÄ±sÄ±"
+                                            rev_id, dok_veri, "red yazısı"
                                         ):
                                             self.logger.info(
-                                                f"ÅÃ¼pheli red yazÄ±sÄ± yÃ¼kleme kullanÄ±cÄ± tarafÄ±ndan iptal edildi (rev_id={rev_id})"
+                                                f"Şüpheli red yazısı yükleme kullanıcı tarafından iptal edildi (rev_id={rev_id})"
                                             )
                                             dok_veri = None
                                     if dok_veri is not None:
@@ -4935,7 +5529,7 @@ class AnaPencere(QMainWindow):
                                         except Exception:
                                             self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
                                 except Exception as e:
-                                    self.logger.error(f"Red yazÄ± dokÃ¼manÄ± kaydedilemedi: {e}", exc_info=True)
+                                    self.logger.error(f"Red yazı dokümanı kaydedilemedi: {e}", exc_info=True)
                                 # Trigger preview if possible
                                 try:
                                     if dok_veri is not None and hasattr(self, "_start_yazi_render"):
@@ -4943,10 +5537,10 @@ class AnaPencere(QMainWindow):
                                 except Exception:
                                     self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
 
-            # Revizyon dokÃ¼manÄ± gÃ¼ncellemesi (her iki tÃ¼r iÃ§in de)
+            # Revizyon dokümanı güncellemesi (her iki tür için de)
             if veri.get("yeni_rev_dosya_yolu"):
-                # Yeni revizyon dokÃ¼manÄ± verisi veritabanÄ±ndaki dokumanlar tablosunda saklanÄ±r.
-                # Revizyonlar tablosunda artÄ±k 'dokuman' alanÄ± yok; db helper kullanarak gÃ¼ncelleme yap.
+                # Yeni revizyon dokümanı verisi veritabanındaki dokumanlar tablosunda saklanır.
+                # Revizyonlar tablosunda artık 'dokuman' alanı yok; db helper kullanarak güncelleme yap.
                 with open(veri["yeni_rev_dosya_yolu"], "rb") as f:
                     dosya_verisi = f.read()
                     dosya_adi = os.path.basename(veri["yeni_rev_dosya_yolu"])
@@ -4968,23 +5562,23 @@ class AnaPencere(QMainWindow):
                     except Exception:
                         pass
                 except Exception as e:
-                    self.logger.error(f"DokÃ¼man gÃ¼ncellemesi baÅŸarÄ±sÄ±z: {e}")
+                    self.logger.error(f"Doküman güncellemesi başarısız: {e}")
                     raise
             self.db.conn.commit()
-            self.logger.info(f"Revizyon {rev_id} baÅŸarÄ±yla gÃ¼ncellendi ({yazi_turu})")
+            self.logger.info(f"Revizyon {rev_id} başarıyla güncellendi ({yazi_turu})")
 
         except Exception as e:
             self.db.conn.rollback()
-            self.logger.error(f"Revizyon gÃ¼ncelleme hatasÄ±: {e}", exc_info=True)
+            self.logger.error(f"Revizyon güncelleme hatası: {e}", exc_info=True)
             raise
 
     def arayuzden_projeyi_sil(self):
-        """Projeyi listeden sil ve DB'den de kaldÄ±r"""
+        """Projeyi listeden sil ve DB'den de kaldır"""
         # Permission check
         if not self._check_write_permission("proje silmek"):
             return
         if not self.secili_proje_id:
-            QMessageBox.warning(self, "UyarÄ±", "LÃ¼tfen silinecek projeyi seÃ§in.")
+            QMessageBox.warning(self, "Uyarı", "Lütfen silinecek projeyi seçin.")
             return
 
         # Proje bilgilerini al
@@ -4997,7 +5591,7 @@ class AnaPencere(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Projeyi Sil",
-            f"'{proje_kodu}' kodlu projeyi ve tÃ¼m revizyonlarÄ±nÄ± silmek istediÄŸinize emin misiniz?\n\nBu iÅŸlem geri alÄ±namaz!",
+            f"'{proje_kodu}' kodlu projeyi ve tüm revizyonlarını silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz!",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -5011,30 +5605,30 @@ class AnaPencere(QMainWindow):
                     self._clear_preview()
                     self._invalidate_filter_cache_and_reload()
                     QMessageBox.information(
-                        self, "BaÅŸarÄ±lÄ±", "Proje baÅŸarÄ±yla silindi."
+                        self, "Başarılı", "Proje başarıyla silindi."
                     )
                 else:
                     QMessageBox.critical(self, "Hata", "Proje silinemedi.")
             except Exception as e:
-                self.logger.error(f"Proje silme hatasÄ±: {e}", exc_info=True)
-                QMessageBox.critical(self, "Hata", f"Proje silinirken hata oluÅŸtu: {e}")
+                self.logger.error(f"Proje silme hatası: {e}", exc_info=True)
+                QMessageBox.critical(self, "Hata", f"Proje silinirken hata oluştu: {e}")
 
     def gelen_yazidan_coklu_proje_olustur(self):
-        """Gelen yazÄ±dan Ã§oklu proje oluÅŸtur/gÃ¼ncelle"""
+        """Gelen yazıdan çoklu proje oluştur/güncelle"""
         self._toplu_yazi_islem_baslat("gelen")
 
     def giden_yazidan_coklu_proje_olustur(self):
-        """Giden yazÄ±dan Ã§oklu proje oluÅŸtur/gÃ¼ncelle"""
+        """Giden yazıdan çoklu proje oluştur/güncelle"""
         self._toplu_yazi_islem_baslat("giden")
 
     def _toplu_yazi_islem_baslat(self, islem_turu):
-        """Toplu yazÄ± iÅŸlemlerini baÅŸlatÄ±r (Gelen/Giden)"""
+        """Toplu yazı işlemlerini başlatır (Gelen/Giden)"""
         try:
-            # 1. YazÄ± dosyasÄ±nÄ± seÃ§
+            # 1. Yazı dosyasını seç
             # Normalize operation type
             itype = (islem_turu or "").strip().lower()
             # Detect DB action based on islem_turu (case-insensitive)
-            if itype in ("gelen", "gelen yazÄ±", "gelen_yazi"):
+            if itype in ("gelen", "gelen yazı", "gelen_yazi"):
                 db_action = "gelen"
             elif itype in ("onay", "giden onay", "giden_onay"):
                 db_action = "onay"
@@ -5047,31 +5641,31 @@ class AnaPencere(QMainWindow):
             else:
                 db_action = "gelen"
 
-            baslik = "Gelen YazÄ± SeÃ§" if db_action == "gelen" else "Giden YazÄ± SeÃ§"
+            baslik = "Gelen Yazı Seç" if db_action == "gelen" else "Giden Yazı Seç"
             dosya_yolu, _ = QFileDialog.getOpenFileName(
-                self, baslik, "", "PDF DosyalarÄ± (*.pdf);;TÃ¼m Dosyalar (*.*)"
+                self, baslik, "", "PDF Dosyaları (*.pdf);;Tüm Dosyalar (*.*)"
             )
             if not dosya_yolu:
                 return
 
             dosya_adi = os.path.basename(dosya_yolu)
 
-            # 2. YazÄ± bilgilerini Ã§Ä±kar (Tarih ve SayÄ±)
+            # 2. Yazı bilgilerini çıkar (Tarih ve Sayı)
             bilgiler = dosyadan_tarih_sayi_cikar(dosya_adi)
             if not bilgiler:
                 bilgiler = {}
             yazi_no = bilgiler.get("sayi", "")
             tarih = bilgiler.get("tarih", datetime.datetime.now().strftime("%d.%m.%Y"))
 
-            # 3. YazÄ± bilgilerini teyit et/dÃ¼zenle
+            # 3. Yazı bilgilerini teyit et/düzenle
             dialog = OnayRedDialog(
                 self,
                 islem_turu.capitalize(),
-                title=f"Toplu {islem_turu.capitalize()} YazÄ± Ä°ÅŸlemi",
+                title=f"Toplu {islem_turu.capitalize()} Yazı İşlemi",
             )
             dialog.yazi_no_combo.setEditText(yazi_no)
             dialog.tarih_entry.setText(tarih)
-            # Dosya yolu zaten seÃ§ildi, dialogda gÃ¶stermeye gerek yok veya set edebiliriz
+            # Dosya yolu zaten seçildi, dialogda göstermeye gerek yok veya set edebiliriz
             dialog.dosya_etiketi.setText(dosya_adi)
             dialog.dosya_yolu = dosya_yolu  # Dialogun dosya yolunu set et
 
@@ -5081,7 +5675,7 @@ class AnaPencere(QMainWindow):
             yazi_data = dialog.get_data()
             yazi_no = yazi_data["yazi_no"]
             tarih = yazi_data["tarih"]
-            # Dosya yolu dialogdan geleni kullan (deÄŸiÅŸtirilmiÅŸ olabilir)
+            # Dosya yolu dialogdan geleni kullan (değiştirilmiş olabilir)
             final_dosya_yolu = yazi_data["dosya_yolu"] or dosya_yolu
 
             # Determine yazi_turu (db) based on db_action. We need this BEFORE saving the yazi dokuman.
@@ -5089,11 +5683,11 @@ class AnaPencere(QMainWindow):
             if db_action == "giden":
                 # Ask user for onay or red for generic giden operation (do this before saving the yazi dokuman)
                 msg = QMessageBox(self)
-                msg.setWindowTitle("YazÄ± TÃ¼rÃ¼")
-                msg.setText("Bu giden yazÄ± ne tÃ¼r bir iÅŸlemdir?")
+                msg.setWindowTitle("Yazı Türü")
+                msg.setText("Bu giden yazı ne tür bir işlemdir?")
                 msg.addButton("Onay", QMessageBox.AcceptRole)
                 msg.addButton("Red", QMessageBox.RejectRole)
-                msg.addButton("Ä°ptal", QMessageBox.DestructiveRole)
+                msg.addButton("İptal", QMessageBox.DestructiveRole)
                 ret = msg.exec()
 
                 if ret == QMessageBox.DestructiveRole:
@@ -5106,7 +5700,7 @@ class AnaPencere(QMainWindow):
             elif db_action == "red":
                 db_yazi_turu = "red"
 
-            # 4. YazÄ± dosyasÄ±nÄ± veritabanÄ±na kaydet (yazÄ± dokÃ¼manÄ±nÄ± kayÄ±t et)
+            # 4. Yazı dosyasını veritabanına kaydet (yazı dokümanını kayıt et)
             with open(final_dosya_yolu, "rb") as f:
                 dosya_verisi = f.read()
             # Save the actual yazi document in the yazi_dokumanlari table so it can be opened later
@@ -5119,33 +5713,33 @@ class AnaPencere(QMainWindow):
                     tarih,
                 )
                 if saved:
-                    self.logger.info(f"YazÄ± dokÃ¼manÄ± kaydedildi: yazi_no={yazi_no}, type={db_yazi_turu}")
+                    self.logger.info(f"Yazı dokümanı kaydedildi: yazi_no={yazi_no}, type={db_yazi_turu}")
                 else:
-                    self.logger.warning(f"YazÄ± dokÃ¼manÄ± kaydedilemedi (db returned falsy): yazi_no={yazi_no}")
+                    self.logger.warning(f"Yazı dokümanı kaydedilemedi (db returned falsy): yazi_no={yazi_no}")
             except Exception as e:
-                # If saving the yazi dokÃ¼manÄ± fails, log error and abort the bulk operation
-                self.logger.error(f"YazÄ± dokÃ¼manÄ± kaydÄ± hatasÄ±: {e}", exc_info=True)
-                QMessageBox.critical(self, "Hata", f"YazÄ± dokÃ¼manÄ± kaydedilemedi: {e}")
+                # If saving the yazi dokümanı fails, log error and abort the bulk operation
+                self.logger.error(f"Yazı dokümanı kaydı hatası: {e}", exc_info=True)
+                QMessageBox.critical(self, "Hata", f"Yazı dokümanı kaydedilemedi: {e}")
                 return
 
-            # YazÄ± tÃ¼rÃ¼nÃ¼ belirle (gelen, onay, red)
-            # Giden yazÄ±larda onay/red ayrÄ±mÄ± kullanÄ±cÄ±ya sorulmalÄ± mÄ±?
-            # Åimdilik 'giden' ise varsayÄ±lan olarak 'onay' kabul edelim veya dialogda sorulmalÄ±ydÄ±.
-            # OnayRedDialog aslÄ±nda tek bir iÅŸlem iÃ§in tasarlandÄ±.
-            # BasitleÅŸtirmek iÃ§in: 'gelen' -> 'gelen', 'giden' -> 'onay' (varsayÄ±lan)
-            # Ancak giden yazÄ±lar red de olabilir.
+            # Yazı türünü belirle (gelen, onay, red)
+            # Giden yazılarda onay/red ayrımı kullanıcıya sorulmalı mı?
+            # Şimdilik 'giden' ise varsayılan olarak 'onay' kabul edelim veya dialogda sorulmalıydı.
+            # OnayRedDialog aslında tek bir işlem için tasarlandı.
+            # Basitleştirmek için: 'gelen' -> 'gelen', 'giden' -> 'onay' (varsayılan)
+            # Ancak giden yazılar red de olabilir.
 
             # db_yazi_turu already set above; nothing to do here
 
             # 5b. Prepare selected projects mapping and selected codes
             selected_projects = self._get_selected_projects()
             if not selected_projects:
-                QMessageBox.warning(self, "UyarÄ±", "LÃ¼tfen iÅŸlem iÃ§in en az bir proje seÃ§in.")
+                QMessageBox.warning(self, "Uyarı", "Lütfen işlem için en az bir proje seçin.")
                 return
             projeler_dict = self._prepare_projeler_dict_for_action(selected_projects, db_action)
             secilen_kodlar = list(projeler_dict.keys())
 
-            # 6. Ä°ÅŸlemi uygula
+            # 6. İşlemi uygula
             basarili_sayisi = 0
             for kod in secilen_kodlar:
                 pid = projeler_dict[kod]["id"]
@@ -5164,19 +5758,19 @@ class AnaPencere(QMainWindow):
                 if sonuc == "Basarili":
                     basarili_sayisi += 1
                 else:
-                    self.logger.error(f"Toplu iÅŸlem hatasÄ± ({kod}): {sonuc}")
+                    self.logger.error(f"Toplu işlem hatası ({kod}): {sonuc}")
 
-            # 7. SonuÃ§ bildir - clear cache and reload projects
+            # 7. Sonuç bildir - clear cache and reload projects
             self._invalidate_filter_cache_and_reload()
             QMessageBox.information(
                 self,
-                "Ä°ÅŸlem TamamlandÄ±",
-                f"{len(secilen_kodlar)} projeden {basarili_sayisi} tanesi baÅŸarÄ±yla gÃ¼ncellendi.",
+                "İşlem Tamamlandı",
+                f"{len(secilen_kodlar)} projeden {basarili_sayisi} tanesi başarıyla güncellendi.",
             )
 
         except Exception as e:
-            self.logger.error(f"Toplu yazÄ± iÅŸlemi hatasÄ±: {e}", exc_info=True)
-            QMessageBox.critical(self, "Hata", f"Ä°ÅŸlem sÄ±rasÄ±nda hata oluÅŸtu: {e}")
+            self.logger.error(f"Toplu yazı işlemi hatası: {e}", exc_info=True)
+            QMessageBox.critical(self, "Hata", f"İşlem sırasında hata oluştu: {e}")
 
     def _get_selected_projects(self):
         """Return a dict of selected projects (id -> ProjeModel)."""
@@ -5216,20 +5810,20 @@ class AnaPencere(QMainWindow):
                 latest = revs[0] if revs else None
                 # Map db_action to rev field to check
                 if db_action == 'gelen' and latest and latest.gelen_yazi_no:
-                    info['uyari'] = f"Mevcut gelen yazÄ±: {latest.gelen_yazi_no} ({latest.revizyon_kodu})"
+                    info['uyari'] = f"Mevcut gelen yazı: {latest.gelen_yazi_no} ({latest.revizyon_kodu})"
                 if db_action == 'onay' and latest and latest.onay_yazi_no:
-                    info['uyari'] = f"Mevcut onay yazÄ±: {latest.onay_yazi_no} ({latest.revizyon_kodu})"
+                    info['uyari'] = f"Mevcut onay yazı: {latest.onay_yazi_no} ({latest.revizyon_kodu})"
                 if db_action == 'notlu_onay' and latest and latest.onay_yazi_no:
-                    info['uyari'] = f"Mevcut notlu onay yazÄ±: {latest.onay_yazi_no} ({latest.revizyon_kodu})"
+                    info['uyari'] = f"Mevcut notlu onay yazı: {latest.onay_yazi_no} ({latest.revizyon_kodu})"
                 if db_action == 'red' and latest and latest.red_yazi_no:
-                    info['uyari'] = f"Mevcut red yazÄ±: {latest.red_yazi_no} ({latest.revizyon_kodu})"
+                    info['uyari'] = f"Mevcut red yazı: {latest.red_yazi_no} ({latest.revizyon_kodu})"
             except Exception:
                 pass
             projeler_dict[p.proje_kodu] = info
         return projeler_dict
 
     def guncelle_gosterge_panelini(self):
-        """GÃ¶sterge panelindeki sayÄ±larÄ± gÃ¼ncelle"""
+        """Gösterge panelindeki sayıları güncelle"""
         try:
             # Check if the dashboard panel exists
             if not hasattr(self, "istatistik_etiketleri"):
@@ -5237,7 +5831,7 @@ class AnaPencere(QMainWindow):
 
             toplam = len(self.tum_projeler)
 
-            # Ä°statistikleri hesapla
+            # İstatistikleri hesapla
             onayli = sum(1 for p in self.tum_projeler if p.durum == Durum.ONAYLI.value)
             red = sum(1 for p in self.tum_projeler if p.durum == Durum.REDDEDILDI.value)
             notlu = sum(
@@ -5245,7 +5839,7 @@ class AnaPencere(QMainWindow):
             )
             bekleyen = toplam - (onayli + red + notlu)
 
-            # TSE Ä°statistikleri
+            # TSE İstatistikleri
             tse_gonderilen = sum(
                 1 for p in self.tum_projeler if getattr(p, "tse_gonderildi", 0)
             )
@@ -5262,32 +5856,32 @@ class AnaPencere(QMainWindow):
             _set_stat_value(
                 toplam,
                 "Toplam G\u00f6r\u00fcnt\u00fclenen Proje:",
-                "Toplam GÃ¶rÃ¼ntÃ¼lenen Proje:",
+                "Toplam Görüntülenen Proje:",
             )
-            _set_stat_value(onayli, "Onayl\u0131:", "OnaylÄ±:")
-            _set_stat_value(notlu, "Notlu Onayl\u0131:", "Notlu OnaylÄ±:")
+            _set_stat_value(onayli, "Onayl\u0131:", "Onaylı:")
+            _set_stat_value(notlu, "Notlu Onayl\u0131:", "Notlu Onaylı:")
             _set_stat_value(red, "Reddedilen:")
             _set_stat_value(
                 bekleyen,
                 "Beklemede (Onays\u0131z):",
-                "Beklemede (OnaysÄ±z):",
+                "Beklemede (Onaysız):",
             )
             _set_stat_value(
                 tse_gonderilen,
                 "TSE'ye G\u00f6nderilen:",
-                "TSE'ye GÃ¶nderilen:",
+                "TSE'ye Gönderilen:",
             )
             _set_stat_value(
                 tse_gonderilmeyen,
                 "Hen\u00fcz G\u00f6nderilmeyen:",
-                "HenÃ¼z GÃ¶nderilmeyen:",
+                "Henüz Gönderilmeyen:",
             )
 
-            # TÃ¼r DaÄŸÄ±lÄ±mÄ±: per-type status breakdown
+            # Tür Dağılımı: per-type status breakdown
             try:
                 self._tur_stats = {}
                 for p in self.tum_projeler:
-                    tur = p.proje_turu or "(BelirtilmemiÅŸ)"
+                    tur = p.proje_turu or "(Belirtilmemiş)"
                     stat = self._tur_stats.setdefault(
                         tur, {"total": 0, "onayli": 0, "notlu": 0, "red": 0}
                     )
@@ -5350,21 +5944,21 @@ class AnaPencere(QMainWindow):
                         key=lambda kv: kv[1]["total"],
                         reverse=True,
                     ):
-                        text += f"{tur}: {val['total']} (OnaylÄ±: {val['onayli']}, Notlu OnaylÄ±: {val['notlu']}, Reddedilen: {val['red']})\n"
+                        text += f"{tur}: {val['total']} (Onaylı: {val['onayli']}, Notlu Onaylı: {val['notlu']}, Reddedilen: {val['red']})\n"
                     if hasattr(self, "rapor_tur_listesi"):
                         self.rapor_tur_listesi.setText(
-                            text if text else "Proje tÃ¼rÃ¼ bilgisi yok"
+                            text if text else "Proje türü bilgisi yok"
                         )
             except Exception as e:
-                self.logger.warning(f"TÃ¼r daÄŸÄ±lÄ±mÄ± oluÅŸturulurken hata: {e}")
+                self.logger.warning(f"Tür dağılımı oluşturulurken hata: {e}")
 
         except Exception as e:
-            self.logger.error(f"GÃ¶sterge paneli gÃ¼ncellenirken hata: {e}")
+            self.logger.error(f"Gösterge paneli güncellenirken hata: {e}")
 
     def projeleri_filtrele(self, text=None):
-        """Arama metnine gÃ¶re projeleri filtrele"""
-        # Bu metod arama kutusu deÄŸiÅŸtiÄŸinde Ã§aÄŸrÄ±lÄ±r.
-        # Filtreleme UI seviyesinde uygulanÄ±r; self.tum_projeler iÃ§indeki veriler Ã¼zerinde Ã§alÄ±ÅŸÄ±r.
+        """Arama metnine göre projeleri filtrele"""
+        # Bu metod arama kutusu değiştiğinde çağrılır.
+        # Filtreleme UI seviyesinde uygulanır; self.tum_projeler içindeki veriler üzerinde çalışır.
         try:
             # Normalize a quick safe representation of tum_projeler
             if not isinstance(self.tum_projeler, list):
@@ -5391,9 +5985,9 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"projeleri_filtrele hata: {e}", exc_info=True)
 
     def yenile(self, keep_rev_id: Optional[int] = None, keep_project_id: Optional[int] = None):
-        """Listeyi ve veritabanÄ±nÄ± yenile; isteÄŸe baÄŸlÄ± olarak seÃ§imleri korur."""
-        self.db.cleanup_connections()  # BaÄŸlantÄ±larÄ± temizle
-        # keep_project_id yoksa mevcut seÃ§ili projeyi koru; rev id verildiyse aynÄ± rev'i seÃ§meyi dene
+        """Listeyi ve veritabanını yenile; isteğe bağlı olarak seçimleri korur."""
+        self.db.cleanup_connections()  # Bağlantıları temizle
+        # keep_project_id yoksa mevcut seçili projeyi koru; rev id verildiyse aynı rev'i seçmeyi dene
         target_project = keep_project_id if keep_project_id is not None else getattr(self, "secili_proje_id", None)
         self._invalidate_filter_cache_and_reload(keep_project_id=target_project, keep_rev_id=keep_rev_id)
 
@@ -5410,7 +6004,7 @@ class AnaPencere(QMainWindow):
                     if hasattr(self.project_panel, "set_categories"):
                         self.project_panel.set_categories(kategoriler)
                 except Exception as e:
-                    self.logger.error(f"Kategoriler yÃ¼klenirken hata: {e}")
+                    self.logger.error(f"Kategoriler yüklenirken hata: {e}")
 
                 self.project_panel.load_projects(projects)
                 return
@@ -5459,10 +6053,10 @@ class AnaPencere(QMainWindow):
                     emoji = "âšª"  # Default: Waiting
                     color = None
 
-                    if p.durum == "Onayli":  # Fixed: was "OnaylandÄ±"
+                    if p.durum == "Onayli":  # Fixed: was "Onaylandı"
                         emoji = "ğŸŸ¢"
                         color = QColor("#d4edda")  # Light Green
-                    elif p.durum == "Notlu Onayli":  # Fixed: was "OnaylandÄ± (Notlu)"
+                    elif p.durum == "Notlu Onayli":  # Fixed: was "Onaylandı (Notlu)"
                         emoji = "ğŸŸ "
                         color = QColor("#fff3cd")  # Light Orange
                     elif p.durum == "Reddedildi":
@@ -5543,7 +6137,7 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"_populate_projects_ui hata: {e}", exc_info=True)
 
     def _goruntule_dokuman(self):
-        """SeÃ§ili revizyonun dokÃ¼manÄ±nÄ± harici gÃ¶rÃ¼ntÃ¼leyicide aÃ§"""
+        """Seçili revizyonun dokümanını harici görüntüleyicide aç"""
         item = self._get_secili_revizyon_item()
         if not item:
             return
@@ -5555,16 +6149,19 @@ class AnaPencere(QMainWindow):
         try:
             self._open_revision_document(rev)
         except Exception as e:
-            self.logger.error(f"DokÃ¼man gÃ¶rÃ¼ntÃ¼leme hatasÄ±: {e}", exc_info=True)
-            QMessageBox.critical(self, "Hata", f"DokÃ¼man aÃ§Ä±lamadÄ±: {e}")
+            self.logger.error(f"Doküman görüntüleme hatası: {e}", exc_info=True)
+            QMessageBox.critical(self, "Hata", f"Doküman açılamadı: {e}")
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    # Font ayarlarÄ±
+    # Font ayarları
     font = QFont("Segoe UI", 9)
     app.setFont(font)
 
     window = AnaPencere()
     window.show()
     sys.exit(app.exec())
+
+
+

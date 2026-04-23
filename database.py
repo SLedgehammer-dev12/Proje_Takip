@@ -22,7 +22,16 @@ from utils import get_class_logger
 
 
 class ProjeTakipDB:
-    def __init__(self, db_adi="projeler.db"):
+    def __init__(self, db_adi="projeler.db", allow_create: bool = True):
+        """
+        db_adi: Veritabanı dosya yolu.
+        allow_create: False ise dosya yoksa yeni, boş bir veritabanı oluşturulmaz
+                      ve FileNotFoundError fırlatılır. Bu, yanlış yol seçiminde
+                      sessizce boş DB oluşmasını engeller.
+        """
+        if not allow_create and not os.path.exists(db_adi):
+            raise FileNotFoundError(f"Veritabanı bulunamadı: {db_adi}")
+
         self.db_adi = db_adi
         self.logger = get_class_logger(self)
         self._is_closed = False
@@ -47,6 +56,7 @@ class ProjeTakipDB:
         # Setup database
         self.tablolari_olustur()
         self._ensure_yazi_dokumanlari_schema()
+        self._ensure_revizyonlar_metadata_schema()
         self._indeksleri_olustur()
 
         # CLEANUP: migration run removed - migrations completed
@@ -68,23 +78,43 @@ class ProjeTakipDB:
         return self.conn
 
     def _open_connection(self, db_path: Optional[str] = None) -> sqlite3.Connection:
-        conn = sqlite3.connect(db_path or self.db_adi, isolation_level="DEFERRED")
-        self._configure_connection(conn)
+        path = db_path or self.db_adi
+        conn = sqlite3.connect(path, isolation_level="DEFERRED")
+        self._configure_connection(conn, path)
         return conn
 
-    def _configure_connection(self, conn: sqlite3.Connection) -> None:
-        pragma_statements = (
-            "PRAGMA journal_mode = WAL",
-            "PRAGMA synchronous = NORMAL",
-            "PRAGMA foreign_keys = ON",
-            "PRAGMA busy_timeout = 10000",
-            "PRAGMA wal_autocheckpoint = 1000",
-            "PRAGMA journal_size_limit = 67108864",
-            "PRAGMA cache_size = -64000",
-            "PRAGMA mmap_size = 64000000",
-            "PRAGMA temp_store = MEMORY",
-            "PRAGMA page_size = 4096",
-        )
+    def _configure_connection(self, conn: sqlite3.Connection, path: str) -> None:
+        is_network = self._path_is_network_location(path)
+
+        if is_network:
+            pragma_statements = (
+                "PRAGMA journal_mode = DELETE",
+                "PRAGMA synchronous = FULL",
+                "PRAGMA foreign_keys = ON",
+                "PRAGMA busy_timeout = 20000",
+                "PRAGMA cache_size = -64000",
+                "PRAGMA mmap_size = 0",
+                "PRAGMA temp_store = MEMORY",
+                "PRAGMA page_size = 4096",
+            )
+            try:
+                self.logger.info("Ağ paylaşımlı veritabanı algılandı; WAL devre dışı (path=%s)", path)
+            except Exception:
+                pass
+        else:
+            pragma_statements = (
+                "PRAGMA journal_mode = WAL",
+                "PRAGMA synchronous = NORMAL",
+                "PRAGMA foreign_keys = ON",
+                "PRAGMA busy_timeout = 10000",
+                "PRAGMA wal_autocheckpoint = 1000",
+                "PRAGMA journal_size_limit = 67108864",
+                "PRAGMA cache_size = -64000",
+                "PRAGMA mmap_size = 64000000",
+                "PRAGMA temp_store = MEMORY",
+                "PRAGMA page_size = 4096",
+            )
+
         for statement in pragma_statements:
             try:
                 conn.execute(statement)
@@ -148,6 +178,7 @@ class ProjeTakipDB:
         self._is_closed = False
         self.tablolari_olustur()
         self._ensure_yazi_dokumanlari_schema()
+        self._ensure_revizyonlar_metadata_schema()
         self._indeksleri_olustur()
         return success
 
@@ -189,7 +220,7 @@ class ProjeTakipDB:
                     gelen_yazi_no TEXT, gelen_yazi_tarih TEXT, onay_yazi_no TEXT, onay_yazi_tarih TEXT,
                     red_yazi_no TEXT, red_yazi_tarih TEXT, proje_rev_no INTEGER,
                     tse_gonderildi INTEGER DEFAULT 0, tse_yazi_no TEXT, tse_yazi_tarih TEXT,
-                    yazi_turu TEXT DEFAULT 'gelen',
+                    yazi_turu TEXT DEFAULT 'gelen', yazi_konu TEXT, yazi_kurum TEXT,
                     FOREIGN KEY (proje_id) REFERENCES projeler (id) ON DELETE CASCADE
                 )"""
             )
@@ -383,6 +414,32 @@ class ProjeTakipDB:
             self.logger.error(f"yazi_dokumanlari schema migration failed: {e}", exc_info=True)
             raise
 
+    def _ensure_revizyonlar_metadata_schema(self):
+        """Add optional OCR-backed metadata columns to legacy revizyonlar tables."""
+        try:
+            columns = {
+                row[1]
+                for row in self.cursor.execute("PRAGMA table_info(revizyonlar)").fetchall()
+            }
+            pending = []
+            if "yazi_konu" not in columns:
+                pending.append("ALTER TABLE revizyonlar ADD COLUMN yazi_konu TEXT")
+            if "yazi_kurum" not in columns:
+                pending.append("ALTER TABLE revizyonlar ADD COLUMN yazi_kurum TEXT")
+            if not pending:
+                return
+
+            with self.transaction(track_change=False):
+                for sql in pending:
+                    self.cursor.execute(sql)
+            self.logger.info("revizyonlar schema extended with OCR metadata columns.")
+        except Exception as e:
+            self.logger.error(
+                f"revizyonlar schema migration failed: {e}",
+                exc_info=True,
+            )
+            raise
+
     def _normalize_yazi_tarih_key(self, yazi_tarih: Optional[str]) -> str:
         if yazi_tarih is None:
             return ""
@@ -498,7 +555,31 @@ class ProjeTakipDB:
         return True
 
     def _is_network_database(self) -> bool:
-        return self.db_adi.startswith("\\\\") or self.db_adi.startswith("//")
+        return self._path_is_network_location(self.db_adi)
+
+    def _path_is_network_location(self, path: Optional[str]) -> bool:
+        try:
+            normalized = os.path.abspath(path or self.db_adi)
+        except Exception:
+            normalized = path or self.db_adi
+
+        if normalized.startswith("\\\\") or normalized.startswith("//"):
+            return True
+
+        if os.name != "nt":
+            return False
+
+        try:
+            drive, _ = os.path.splitdrive(normalized)
+            if not drive:
+                return False
+            import ctypes
+
+            DRIVE_REMOTE = 4
+            drive_root = f"{drive}\\"
+            return ctypes.windll.kernel32.GetDriveTypeW(drive_root) == DRIVE_REMOTE
+        except Exception:
+            return False
 
     def optimize_database(self):
         try:
@@ -546,6 +627,49 @@ class ProjeTakipDB:
     # CRUD OPERATIONS
     # =============================================================================
 
+    def kategori_var_mi(self, kategori_id: Optional[Any]) -> bool:
+        normalized = self._normalize_kategori_id(
+            kategori_id,
+            log_invalid=False,
+        )
+        return normalized is not None
+
+    def _normalize_kategori_id(
+        self,
+        kategori_id: Optional[Any],
+        *,
+        log_invalid: bool = True,
+    ) -> Optional[int]:
+        if kategori_id in (None, "", 0, "0"):
+            return None
+
+        try:
+            normalized = int(kategori_id)
+        except (TypeError, ValueError):
+            if log_invalid:
+                self.logger.warning(
+                    "Geçersiz kategori kimliği alındı: %r. Proje kategorisiz kaydedilecek.",
+                    kategori_id,
+                )
+            return None
+
+        if normalized <= 0:
+            return None
+
+        row = self.cursor.execute(
+            "SELECT 1 FROM kategoriler WHERE id = ?",
+            (normalized,),
+        ).fetchone()
+        if row:
+            return normalized
+
+        if log_invalid:
+            self.logger.warning(
+                "Kategori bulunamadı (id=%s). Proje kategorisiz kaydedilecek.",
+                normalized,
+            )
+        return None
+
     def proje_ekle(
         self,
         kod: str,
@@ -555,6 +679,7 @@ class ProjeTakipDB:
     ) -> Optional[int]:
         try:
             with self.transaction():
+                kategori_id = self._normalize_kategori_id(kategori_id)
                 tarih = datetime.datetime.now()
                 hiyerarsi_metni = self.get_kategori_yolu(kategori_id)
                 proje_turu = normalize_project_type(proje_turu)
@@ -598,6 +723,7 @@ class ProjeTakipDB:
 
             # Transaction manually handled here for atomicity across multiple inserts
             with self.transaction():
+                kategori_id = self._normalize_kategori_id(kategori_id)
                 self.cursor.execute(
                     "INSERT INTO projeler (proje_kodu, proje_ismi, proje_turu, olusturma_tarihi, hiyerarsi, kategori_id) VALUES (?, ?, ?, ?, ?, ?)",
                     (kod, isim, proje_turu, tarih, None, kategori_id),
@@ -747,6 +873,8 @@ class ProjeTakipDB:
         dosya_verisi: Optional[bytes] = None,
         gelen_yazi_no: Optional[str] = None,
         gelen_yazi_tarih: Optional[str] = None,
+        yazi_konu: Optional[str] = None,
+        yazi_kurum: Optional[str] = None,
     ) -> Optional[int]:
         try:
             if dosya_verisi is None:
@@ -783,7 +911,7 @@ class ProjeTakipDB:
                     aciklama = f"Revizyon {revizyon_kodu} - dosyadan eklendi"
 
                 self.cursor.execute(
-                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih, yazi_konu, yazi_kurum) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         proje_id,
                         yeni_rev_no,
@@ -794,6 +922,8 @@ class ProjeTakipDB:
                         yazi_turu,
                         gelen_yazi_no,
                         gelen_yazi_tarih,
+                        yazi_konu,
+                        yazi_kurum,
                     ),
                 )
                 revizyon_id = self.cursor.lastrowid
@@ -810,6 +940,84 @@ class ProjeTakipDB:
         except Exception as e:
             self.logger.critical(f"Revizyon ekleme hatası: {e}")
             raise
+
+    def mevcut_projeye_giden_yazi_revizyonu_ekle(
+        self,
+        proje_id: int,
+        revizyon_kodu: str,
+        dosya_adi: Optional[str],
+        dosya_verisi: bytes,
+        islem_turu: str,
+        yazi_no: str,
+        yazi_tarih: str,
+    ) -> Tuple[int, str]:
+        """Create a new outgoing-letter revision and update its letter fields atomically."""
+        durum_haritasi = {
+            "Onay": Durum.ONAYLI.value,
+            "Notlu Onay": Durum.ONAYLI_NOTLU.value,
+            "Red": Durum.REDDEDILDI.value,
+        }
+        alan_haritasi = {
+            "Onay": ("onay_yazi_no", "onay_yazi_tarih"),
+            "Notlu Onay": ("onay_yazi_no", "onay_yazi_tarih"),
+            "Red": ("red_yazi_no", "red_yazi_tarih"),
+        }
+
+        if islem_turu not in durum_haritasi:
+            raise ValueError(f"Desteklenmeyen islem_turu: {islem_turu}")
+        if not dosya_verisi:
+            raise ValueError("Revizyon dokumani bos olamaz.")
+
+        tarih = datetime.datetime.now()
+        yeni_durum = durum_haritasi[islem_turu]
+        yazi_no_alani, yazi_tarih_alani = alan_haritasi[islem_turu]
+        aciklama = f"{islem_turu} Yazısı: {yazi_no} tarihli {yazi_tarih}"
+
+        with self.transaction():
+            row = self.cursor.execute(
+                "SELECT MAX(proje_rev_no) FROM revizyonlar WHERE proje_id = ?",
+                (proje_id,),
+            ).fetchone()
+            max_rev = row[0] if row else None
+            yeni_rev_no = (max_rev + 1) if max_rev is not None else 0
+
+            self.cursor.execute(
+                """
+                INSERT INTO revizyonlar (
+                    proje_id, proje_rev_no, revizyon_kodu, aciklama,
+                    durum, tarih, yazi_turu
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    proje_id,
+                    yeni_rev_no,
+                    revizyon_kodu,
+                    aciklama,
+                    yeni_durum,
+                    tarih,
+                    "giden",
+                ),
+            )
+            revizyon_id = self.cursor.lastrowid
+
+            self.cursor.execute(
+                "INSERT INTO dokumanlar (revizyon_id, dosya_adi, dosya_verisi) VALUES (?, ?, ?)",
+                (revizyon_id, dosya_adi or "unknown", dosya_verisi),
+            )
+
+            self.cursor.execute(
+                f"UPDATE revizyonlar SET {yazi_no_alani} = ?, {yazi_tarih_alani} = ? WHERE id = ?",
+                (yazi_no, yazi_tarih, revizyon_id),
+            )
+
+        self.logger.info(
+            "Giden yazi revizyonu eklendi: proje_id=%s rev=%s islem=%s rev_id=%s",
+            proje_id,
+            revizyon_kodu,
+            islem_turu,
+            revizyon_id,
+        )
+        return revizyon_id, yeni_durum
 
     def projeleri_listele(self) -> List[ProjeModel]:
         # PERFORMANCE: Check cache first
@@ -940,7 +1148,8 @@ class ProjeTakipDB:
                    ) THEN 1
                    ELSE 0
                END as takipte_mi,
-               (SELECT t.takip_notu FROM revizyon_takipleri t WHERE t.revizyon_id = r.id LIMIT 1) as takip_notu
+               (SELECT t.takip_notu FROM revizyon_takipleri t WHERE t.revizyon_id = r.id LIMIT 1) as takip_notu,
+               r.yazi_konu, r.yazi_kurum
         FROM revizyonlar r
         WHERE r.proje_id = ? 
         ORDER BY r.proje_rev_no DESC, r.id DESC
@@ -963,6 +1172,8 @@ class ProjeTakipDB:
         dosya_verisi: bytes,
         gelen_yazi_no: Optional[str] = None,
         gelen_yazi_tarih: Optional[str] = None,
+        yazi_konu: Optional[str] = None,
+        yazi_kurum: Optional[str] = None,
     ) -> bool:
         try:
             with self.transaction():
@@ -973,7 +1184,7 @@ class ProjeTakipDB:
                 sonuc = self.cursor.fetchone()
                 son_rev_no = sonuc[0] if sonuc and sonuc[0] is not None else -1
                 self.cursor.execute(
-                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, gelen_yazi_no, gelen_yazi_tarih) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, gelen_yazi_no, gelen_yazi_tarih, yazi_konu, yazi_kurum) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         proje_id,
                         son_rev_no + 1,
@@ -983,6 +1194,8 @@ class ProjeTakipDB:
                         datetime.datetime.now(),
                         gelen_yazi_no,
                         gelen_yazi_tarih,
+                        yazi_konu,
+                        yazi_kurum,
                     ),
                 )
                 yeni_revizyon_id = self.cursor.lastrowid
@@ -1006,13 +1219,25 @@ class ProjeTakipDB:
             SELECT id, proje_id, revizyon_kodu, aciklama, durum, tarih, 
                    gelen_yazi_no, gelen_yazi_tarih, onay_yazi_no, onay_yazi_tarih, 
                    red_yazi_no, red_yazi_tarih, proje_rev_no,
-                   tse_gonderildi, tse_yazi_no, tse_yazi_tarih
+                   tse_gonderildi, tse_yazi_no, tse_yazi_tarih, yazi_konu, yazi_kurum
             FROM revizyonlar 
             WHERE id = ?
             """,
             (revizyon_id,),
         )
         return self.cursor.fetchone()
+
+    # -------------------------------------------------------------------------
+    # METRICS / DIAGNOSTICS
+    # -------------------------------------------------------------------------
+    def proje_sayisi(self) -> int:
+        """Projeler tablosundaki toplam satır sayısını döndürür."""
+        try:
+            self.cursor.execute("SELECT COUNT(*) FROM projeler")
+            row = self.cursor.fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            return 0
 
     def revizyonu_guncelle(
         self,
@@ -1027,6 +1252,8 @@ class ProjeTakipDB:
         tse_gonderildi: int,
         tse_yazi_no: Optional[str],
         tse_yazi_tarih: Optional[str],
+        yazi_konu: Optional[str] = None,
+        yazi_kurum: Optional[str] = None,
     ) -> bool:
         try:
             # Determine yazi_turu to set (prioritize giden if onay/red provided)
@@ -1045,7 +1272,7 @@ class ProjeTakipDB:
                             onay_yazi_no = ?, onay_yazi_tarih = ?,
                             red_yazi_no = ?, red_yazi_tarih = ?,
                             tse_gonderildi = ?, tse_yazi_no = ?, tse_yazi_tarih = ?,
-                            yazi_turu = ?
+                            yazi_turu = ?, yazi_konu = ?, yazi_kurum = ?
                         WHERE id = ?
                     """,
                         (
@@ -1060,6 +1287,8 @@ class ProjeTakipDB:
                             tse_yazi_no,
                             tse_yazi_tarih,
                             yazi_turu,
+                            yazi_konu,
+                            yazi_kurum,
                             revizyon_id,
                         ),
                     )
@@ -1070,7 +1299,8 @@ class ProjeTakipDB:
                         SET aciklama = ?, gelen_yazi_no = ?, gelen_yazi_tarih = ?,
                             onay_yazi_no = ?, onay_yazi_tarih = ?,
                             red_yazi_no = ?, red_yazi_tarih = ?,
-                            tse_gonderildi = ?, tse_yazi_no = ?, tse_yazi_tarih = ?
+                            tse_gonderildi = ?, tse_yazi_no = ?, tse_yazi_tarih = ?,
+                            yazi_konu = ?, yazi_kurum = ?
                         WHERE id = ?
                     """,
                         (
@@ -1084,6 +1314,8 @@ class ProjeTakipDB:
                             tse_gonderildi,
                             tse_yazi_no,
                             tse_yazi_tarih,
+                            yazi_konu,
+                            yazi_kurum,
                             revizyon_id,
                         ),
                     )
@@ -1295,7 +1527,8 @@ class ProjeTakipDB:
                        ) THEN 1
                        ELSE 0
                    END as takipte_mi,
-                   (SELECT t.takip_notu FROM revizyon_takipleri t WHERE t.revizyon_id = r.id LIMIT 1) as takip_notu
+                    (SELECT t.takip_notu FROM revizyon_takipleri t WHERE t.revizyon_id = r.id LIMIT 1) as takip_notu,
+                    r.yazi_konu, r.yazi_kurum
             FROM revizyonlar r
             WHERE r.proje_id = ?
             ORDER BY r.proje_rev_no DESC
@@ -1584,6 +1817,7 @@ class ProjeTakipDB:
     ) -> bool:
         try:
             with self.transaction():
+                yeni_kategori_id = self._normalize_kategori_id(yeni_kategori_id)
                 self.invalidate_kategori_cache()
                 yeni_hiyerarsi_metni = self.get_kategori_yolu(yeni_kategori_id)
                 yeni_tur = normalize_project_type(yeni_tur)
@@ -1607,6 +1841,7 @@ class ProjeTakipDB:
     ) -> bool:
         try:
             with self.transaction():
+                yeni_kategori_id = self._normalize_kategori_id(yeni_kategori_id)
                 self.invalidate_kategori_cache()
                 yeni_hiyerarsi_metni = self.get_kategori_yolu(yeni_kategori_id)
                 self.cursor.execute(
@@ -1697,6 +1932,7 @@ class ProjeTakipDB:
             return None
         try:
             with self.transaction():
+                parent_id = self._normalize_kategori_id(parent_id, log_invalid=False)
                 self.invalidate_kategori_cache()
                 self.cursor.execute(
                     "INSERT INTO kategoriler (isim, parent_id) VALUES (?, ?)",
@@ -1727,6 +1963,7 @@ class ProjeTakipDB:
             return {}
 
     def get_kategori_yolu(self, kategori_id: Optional[int]) -> str:
+        kategori_id = self._normalize_kategori_id(kategori_id, log_invalid=False)
         if kategori_id is None:
             return ""
         try:

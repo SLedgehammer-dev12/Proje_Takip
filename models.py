@@ -79,3 +79,5 @@ class RevizyonModel:
     supheli_yazi_dokumani: int = 0  # 1: revizyon dokumaniyla birebir ayni
     takipte_mi: int = 0  # 1: takip listesinde aktif
     takip_notu: Optional[str] = None
+    yazi_konu: Optional[str] = None
+    yazi_kurum: Optional[str] = None

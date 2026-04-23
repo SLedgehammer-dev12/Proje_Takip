@@ -1,47 +1,43 @@
 # Update Flow
 
-Bu dosya, Proje Takip Sistemi için GitHub tabanlı güncelleme akışını tek yerde özetler.
+Bu dosya, Proje Takip Sistemi icin GitHub tabanli guncelleme akisinin kanonik ozetidir.
 
 ## Source Of Truth
 
 - Kod deposu: `https://github.com/SLedgehammer-dev12/Proje_Takip`
-- Uygulama içi update kontrolü: GitHub Releases
-- Config anahtarları: `config.py`
+- Uygulama ici update kontrolu: GitHub Releases
+- Config anahtarlari: `config.py`
   - `UPDATE_REPO_OWNER = "SLedgehammer-dev12"`
   - `UPDATE_REPO_NAME = "Proje_Takip"`
   - `UPDATE_RELEASE_ASSET_PATTERN = r"ProjeTakip-.*\.(msi|exe|zip)$"`
 
 ## Release Contract
 
-Her yeni sürüm için aşağıdakiler hazırlanmalıdır:
+Her yeni surum icin asagidakiler hazirlanmalidir:
 
-1. `config.py` içinde `APP_VERSION` güncellenir
-2. `docs/releases/vX.Y.Z.md` oluşturulur
-3. Windows build alınır
-4. En az şu artefaktlar hazırlanır:
-   - `dist/vX.Y.Z/ProjeTakip/ProjeTakip.exe`
+1. `config.py` icinde `APP_VERSION` guncellenir
+2. `docs/releases/vX.Y.Z.md` olusturulur
+3. Windows build alinir
+4. En az su artefaktlar hazirlanir:
+   - `dist/vX.Y.Z_onefile/ProjeTakip-vX.Y.Z-windows-x64.exe`
+   - `release/vX.Y.Z/ProjeTakip-vX.Y.Z-windows-x64.exe`
    - `release/vX.Y.Z/ProjeTakip-vX.Y.Z-windows-x64.zip`
    - `release/vX.Y.Z/SHA256SUMS`
-5. GitHub üzerinde aynı tag adıyla release açılır: `vX.Y.Z`
-6. ZIP ve `SHA256SUMS` release asset olarak yüklenir
+5. GitHub uzerinde ayni tag adiyla release acilir: `vX.Y.Z`
+6. EXE, uyumluluk ZIP'i ve `SHA256SUMS` release asset olarak yuklenir
 
 ## In-App Behavior
 
-Uygulama update kontrolünde:
+Uygulama update kontrolunde:
 
-- GitHub Releases içinden en yeni sürümü arar
-- Asset adını regex ile eşleştirir
-- Checksum dosyasını doğrular
-- Yeni sürüm varsa kullanıcıya release notlarını gösterir
-- Asset dosyasını `Downloads` klasörüne indirir
-
-## Current v2.1.6 Notes
-
-- Kalıcı Türkçe/İngilizce dil seçimi eklendi
-- Merkezi i18n katmanı ile mojibake görünen metinler toparlandı
-- `v2.1.5` istemcilerinin yeni release paketini görebileceği updater sözleşmesi korundu
+- GitHub Releases icinden en yeni surumu arar
+- Asset adini regex ile eslestirir
+- Checksum dosyasini dogrular
+- Yeni surum varsa kullaniciya release notlarini gosterir
+- Asset dosyasini `Downloads` klasorune indirir
+- Karisik uzunluktaki etiketleri (`v2.1.8.5`, `v2.1.9`, `v2.1.9.0`) sayisal olarak karsilastirir
 
 ## Operational Reminder
 
-Repo push işlemi tek başına uygulama içi update için yeterli değildir.
-Uygulamanın yeni sürümü indirebilmesi için ilgili `GitHub Release` ve release asset dosyaları da yayınlanmalıdır.
+Repo push islemi tek basina uygulama ici update icin yeterli degildir.
+Uygulamanin yeni surumu indirebilmesi icin ilgili `GitHub Release` ve release asset dosyalari da yayinlanmalidir.

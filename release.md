@@ -1,17 +1,17 @@
 # Release Guide
 
-Bu dosya, Windows build ve dağıtım sürecini güvenli ve tekrar üretilebilir biçimde yürütmek için kullanılır.
+Bu dosya, Windows build ve dagitim surecini guvenli ve tekrar uretilebilir bicimde yurutmek icin kullanilir.
 
 ## Primary Rule
 
-Güvenlik yazılımlarını atlatmaya çalışılmaz.
-Bunun yerine meşru dağıtım kalitesi artırılır:
+Guvenlik yazilimlarini atlatmaya calisilmaz.
+Bunun yerine mesru dagitim kalitesi artirilir:
 
 - temiz build
-- doğru metadata
+- dogru metadata
 - checksum
-- mümkünse code signing
-- izlenebilir release notları
+- mumkunse code signing
+- izlenebilir release notlari
 
 ## Build Flow
 
@@ -23,41 +23,42 @@ pip install -r requirements-dev.txt
 
 ### Standard Windows build
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build_release.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build_onefile_release.ps1
 ```
 
 ## Expected Outputs
 
-- `dist/ProjeTakip/ProjeTakip.exe`
+- `dist/vX.Y.Z_onefile/ProjeTakip-vX.Y.Z-windows-x64.exe`
+- `release/vX.Y.Z/ProjeTakip-vX.Y.Z-windows-x64.exe`
 - `release/vX.Y.Z/ProjeTakip-vX.Y.Z-windows-x64.zip`
 - `release/vX.Y.Z/SHA256SUMS`
 
 ## Release Validation
 
-- Build gerçekten tamamlandı mı?
-- `.exe` açılış smoke testi yapıldı mı?
-- ZIP ve checksum oluştu mu?
+- Build gercekten tamamlandi mi?
+- `.exe` acilis smoke testi yapildi mi?
+- EXE, ZIP ve checksum olustu mu?
 - `docs/releases/vX.Y.Z.md` mevcut mu?
 - Asset ismi updater regex ile uyumlu mu?
 
 ## Packaging Quality Rules
 
-- One-file yerine gerekmedikçe `onedir` paket tercih et
-- UPX veya agresif sıkıştırma kullanma
+- Varsayilan dagitim paketi one-file `.exe` + uyumluluk `.zip` ciftidir
+- UPX veya agresif sikistirma kullanma
 - Version metadata ekle
-- Gereksiz dev/test bağımlılıklarını pakete sokmamaya çalış
-- Build boyutu anormal büyüyorsa import zincirini analiz et
+- Gereksiz dev/test bagimliliklarini pakete sokmamaya calis
+- Build boyutu anormal buyuyorsa import zincirini analiz et
 
 ## Operational Notes
 
-- `docs/RELEASING.md` ve `docs/UPDATER.md` ana referanstır
-- Build script değişirse önce yerelde doğrula
-- Release çıktıları çalışma verisinden ayrı tutulmalı
-- Checksum dosyası release sürecinin zorunlu parçasıdır
+- `docs/RELEASING.md` ve `docs/UPDATER.md` ana referanstir
+- Build script degisirse once yerelde dogrula
+- Release ciktilari calisma verisinden ayri tutulmalidir
+- Checksum dosyasi release surecinin zorunlu parcasidir
 
 ## Future Improvements
 
 - Code signing certificate ile imzalama
-- Daha hafif build için PyInstaller exclude stratejisi
+- Daha hafif build icin PyInstaller exclude stratejisi
 - Release pipeline standardizasyonu
-- Installer tabanlı dağıtım kararı
+- Installer tabanli dagitim karari

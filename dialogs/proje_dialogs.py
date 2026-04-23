@@ -374,11 +374,27 @@ class DosyadanCokluProjeDialog(QDialog):
 
     def _load_categories(self):
         try:
-            self.kategoriler = [(0, "Kategorisiz")]
+            self.kategoriler = [(None, "Kategorisiz")]
             for kat_id, kat_isim, parent in self.db.get_kategoriler():
                 self.kategoriler.append((kat_id, self.db.get_kategori_yolu(kat_id)))
         except Exception:
-            self.kategoriler = [(0, "Kategorisiz")]
+            self.kategoriler = [(None, "Kategorisiz")]
+
+    def _resolve_category_for_row(self, row: int) -> Tuple[Optional[int], Optional[str]]:
+        combo = self.table.cellWidget(row, 4)
+        if not isinstance(combo, QComboBox):
+            return None, None
+
+        text = combo.currentText().strip()
+        if not text or text.casefold() == "kategorisiz":
+            return None, None
+
+        for index in range(combo.count()):
+            if combo.itemText(index).strip().casefold() == text.casefold():
+                value = combo.itemData(index)
+                return (value if value not in (None, "", 0, "0") else None), None
+
+        return None, f"Kategori bulunamadı: {text}"
 
     def _populate_table(self):
         from PySide6.QtWidgets import QTableWidgetItem, QComboBox, QCheckBox, QLineEdit, QLabel
@@ -458,7 +474,7 @@ class DosyadanCokluProjeDialog(QDialog):
             self.table.setCellWidget(row, 9, ekle_cb)
 
             # Uyarı
-            uyar_item = QTableWidgetItem("")
+            uyar_item = QTableWidgetItem(info.get("uyari", ""))
             uyar_item.setFlags(uyar_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row, 10, uyar_item)
 
@@ -538,8 +554,7 @@ class DosyadanCokluProjeDialog(QDialog):
                 tur = tur_widget.text().strip()
             else:
                 tur = self.table.item(r, 3).text().strip() if self.table.item(r, 3) else None
-            kat_widget = self.table.cellWidget(r, 4)
-            kategori_id = kat_widget.currentData() if kat_widget else None
+            kategori_id, _ = self._resolve_category_for_row(r)
             gelen_no = self.table.item(r, 5).text().strip() if self.table.item(r, 5) else ""
             gelen_t = self.table.item(r, 6).text().strip() if self.table.item(r, 6) else ""
             mevcut = (self.table.item(r, 7).text() == "Evet") if self.table.item(r, 7) else False
@@ -648,11 +663,14 @@ class DosyadanCokluProjeDialog(QDialog):
                 continue
             kod = self._get_kod_for_row(r)
             isim = self._get_isim_for_row(r)
+            _, kategori_hata = self._resolve_category_for_row(r)
             msgs = []
             if not kod:
                 msgs.append("Proje Kodu boş")
             if not isim:
                 msgs.append("Proje İsmi boş")
+            if kategori_hata:
+                msgs.append(kategori_hata)
             # duplicate code check in grid
             if kod:
                 seen = seen_codes.get(kod)

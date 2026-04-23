@@ -27,6 +27,34 @@ function New-PyInstallerSourceDest {
     return "$Source`:$Destination"
 }
 
+function Get-PyInstallerTreeDataArgs {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    if (-not (Test-Path $SourceRoot)) {
+        return @()
+    }
+
+    $entries = @()
+    $sourceRootWithSeparator = ((Resolve-Path $SourceRoot).Path).TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+    foreach ($file in Get-ChildItem -Path $SourceRoot -Recurse -File) {
+        $relativePath = $file.FullName.Substring($sourceRootWithSeparator.Length)
+        $relativeDir = Split-Path -Path $relativePath -Parent
+        $targetDir = $DestinationRoot
+        if ($relativeDir -and $relativeDir -ne ".") {
+            $targetDir = Join-Path $DestinationRoot $relativeDir
+        }
+        $entries += "--add-data"
+        $entries += (New-PyInstallerSourceDest -Source $file.FullName -Destination $targetDir)
+    }
+
+    return $entries
+}
+
 function New-VersionInfoFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -90,11 +118,16 @@ $releaseDir = Join-Path $repoRoot (Join-Path "release" $Version)
 $distRoot = Join-Path $repoRoot (Join-Path "dist" ("{0}_onefile" -f $Version))
 $buildRoot = Join-Path $repoRoot "build"
 $assetName = "ProjeTakip-{0}-windows-x64.exe" -f $Version
+$zipAssetName = "ProjeTakip-{0}-windows-x64.zip" -f $Version
 $distAssetPath = Join-Path $distRoot $assetName
 $releaseAssetPath = Join-Path $releaseDir $assetName
+$releaseZipPath = Join-Path $releaseDir $zipAssetName
 $checksumPath = Join-Path $releaseDir "SHA256SUMS"
+$packageRoot = Join-Path $buildRoot ("release-package-{0}" -f ($Version -replace '[^A-Za-z0-9._-]', '_'))
 $versionInfoPath = Join-Path $buildRoot ("pyinstaller-version-info-onefile-{0}-{1}.txt" -f (($Version -replace '[^A-Za-z0-9._-]', '_')), $PID)
 $mainScript = Join-Path $repoRoot "main.py"
+$ocrRuntimeRoot = Join-Path $repoRoot "ocr\\tesseract"
+$ocrRuntimeExe = Join-Path $ocrRuntimeRoot "tesseract.exe"
 if ($IsLinux -or $IsMacOS) {
     throw "Bu script sadece Windows ortamında kullanılmalıdır."
 }
@@ -123,6 +156,12 @@ if (Test-Path $distAssetPath) {
 if (Test-Path $releaseAssetPath) {
     Remove-Item -Force $releaseAssetPath
 }
+if (Test-Path $releaseZipPath) {
+    Remove-Item -Force $releaseZipPath
+}
+if (Test-Path $packageRoot) {
+    Remove-Item -Recurse -Force $packageRoot
+}
 
 $pyInstallerArgs = @(
     "--noconfirm",
@@ -143,6 +182,13 @@ $pyInstallerArgs = @(
     $mainScript
 )
 
+if (Test-Path $ocrRuntimeExe) {
+    Write-Host "OCR runtime bundle edilecek: $ocrRuntimeRoot"
+    $pyInstallerArgs += Get-PyInstallerTreeDataArgs -SourceRoot $ocrRuntimeRoot -DestinationRoot "ocr\\tesseract"
+} elseif (Test-Path $ocrRuntimeRoot) {
+    Write-Host "Uyari: OCR klasoru bulundu ancak tesseract.exe eksik oldugu icin bundle edilmiyor: $ocrRuntimeRoot"
+}
+
 Write-Host "PyInstaller one-file build baslıyor: $Version"
 & $pythonExe -m PyInstaller @pyInstallerArgs
 if ($LASTEXITCODE -ne 0) {
@@ -154,12 +200,23 @@ if (-not (Test-Path $distAssetPath)) {
 }
 
 Copy-Item -Path $distAssetPath -Destination $releaseAssetPath -Force
-& $pythonExe (Join-Path $repoRoot "scripts/create_checksums.py") $releaseAssetPath --output $checksumPath | Out-Null
+
+New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+Copy-Item -Path $releaseAssetPath -Destination (Join-Path $packageRoot $assetName) -Force
+Copy-Item -Path (Join-Path $repoRoot "KULLANIM_KILAVUZU.md") -Destination (Join-Path $packageRoot "KULLANIM_KILAVUZU.md") -Force
+Copy-Item -Path (Join-Path $repoRoot "guncelleme_notlari.txt") -Destination (Join-Path $packageRoot "guncelleme_notlari.txt") -Force
+& $pythonExe (Join-Path $repoRoot "scripts/create_release_zip.py") $packageRoot $releaseZipPath
+if ($LASTEXITCODE -ne 0) {
+    throw "ZIP release paketi olusturulamadi."
+}
+
+& $pythonExe (Join-Path $repoRoot "scripts/create_checksums.py") $releaseAssetPath $releaseZipPath --output $checksumPath | Out-Null
 
 Write-Host ""
 Write-Host "Hazırlanan dosyalar:"
 Write-Host "  Dist asset : $distAssetPath"
 Write-Host "  Release    : $releaseAssetPath"
+Write-Host "  ZIP        : $releaseZipPath"
 Write-Host "  Checksum   : $checksumPath"
 Write-Host ""
 Write-Host "GitHub release komutu:"

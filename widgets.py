@@ -1,8 +1,7 @@
 # widgets.py
 
 from collections import OrderedDict
-
-import fitz  # PyMuPDF
+import importlib
 from PySide6.QtWidgets import QScrollArea, QTreeWidget, QTreeWidgetItem, QWidget, QVBoxLayout
 
 # Qt, QObject, Signal, Slot, QThread importları yukarı taşındı ve düzenlendi
@@ -18,6 +17,21 @@ from typing import Optional
 # YENİ (ADIM 4.2): Kategori ID rolünü ana pencereden kopyalıyoruz.
 # Bu, main_window.py'deki KATEGORI_ID_ROL = Qt.UserRole + 1 tanımıyla eşleşir.
 KATEGORI_ID_ROL = Qt.UserRole + 1
+_FITZ_MODULE = None
+
+
+def _get_fitz_module(importer=None):
+    """Load PyMuPDF lazily so startup does not fail before preview is used."""
+    global _FITZ_MODULE
+    if _FITZ_MODULE is not None:
+        return _FITZ_MODULE
+
+    import_func = importer or importlib.import_module
+    try:
+        _FITZ_MODULE = import_func("fitz")
+    except Exception as exc:
+        raise RuntimeError("PDF onizleme motoru (PyMuPDF) yuklenemedi.") from exc
+    return _FITZ_MODULE
 
 # =============================================================================
 # ÖZEL WIDGET SINIFLARI
@@ -125,16 +139,33 @@ class PdfRenderWorker(QObject):
     yazi_image_ready = Signal(QImage, str)
     error = Signal(str, int)
 
-    def __init__(self):
+    def __init__(self, *, performance_mode: bool = False):
         super().__init__()
-        # Önbellekleme mekanizması - aynı revizyonun tekrar render edilmesini önle
         self._last_rendered_id = None
         self._last_rendered_zoom = None
         self._last_rendered_signature = None
         self._last_rendered_image = None
-        self._max_cache_size = 5 * 1024 * 1024  # 5 MB max cache
         self._letter_render_cache = OrderedDict()
+        self.performance_mode = False
+        self._max_cache_size = 5 * 1024 * 1024
         self._max_letter_cache_entries = 6
+        self._max_render_dimension = 3500
+        self._preview_zoom_cap = 2.0
+        self.configure_performance_mode(performance_mode)
+
+    def configure_performance_mode(self, enabled: bool):
+        self.performance_mode = bool(enabled)
+        if self.performance_mode:
+            self._max_cache_size = 2 * 1024 * 1024
+            self._max_letter_cache_entries = 2
+            self._max_render_dimension = 2200
+            self._preview_zoom_cap = 1.35
+        else:
+            self._max_cache_size = 5 * 1024 * 1024
+            self._max_letter_cache_entries = 6
+            self._max_render_dimension = 3500
+            self._preview_zoom_cap = 2.0
+        self.clear_cache()
 
     # --- ÇÖKME DÜZELTMESİ (ADIM 6): Slot'a rev_id (int) eklendi ---
     @Slot(bytes, float, int)
@@ -142,7 +173,12 @@ class PdfRenderWorker(QObject):
         """PDF sayfasını görüntüye dönüştür ve önbelleğe al - optimize edilmiş"""
 
         logger = logging.getLogger(__name__)
-        logger.debug(f"PdfRenderWorker.render_page called for rev_id={rev_id}, zoom={zoom_factor}, dokuman_size={len(dokuman_verisi) if dokuman_verisi else 0}")
+        logger.debug(
+            "PdfRenderWorker.render_page called for rev_id=%s, zoom=%s, dokuman_size=%s",
+            rev_id,
+            zoom_factor,
+            len(dokuman_verisi) if dokuman_verisi else 0,
+        )
         document_signature = hash(dokuman_verisi) if dokuman_verisi else None
 
         # Aynı revizyon için önceki render varsa ve zoom aynıysa, cache'den döndür
@@ -156,7 +192,9 @@ class PdfRenderWorker(QObject):
             # Cache kontrolü - bellek sınırını kontrol et
             image_size = self._last_rendered_image.sizeInBytes()
             if image_size < self._max_cache_size:
-                logger.debug(f"PdfRenderWorker: returning cached image for rev_id={rev_id}")
+                logger.debug(
+                    "PdfRenderWorker: returning cached image for rev_id=%s", rev_id
+                )
                 self.image_ready.emit(self._last_rendered_image, rev_id)
                 return
 
@@ -166,6 +204,7 @@ class PdfRenderWorker(QObject):
 
         try:
             # PDF belgesini aç ve kontrol et
+            fitz = _get_fitz_module()
             pdf_doc = fitz.open(stream=dokuman_verisi, filetype="pdf")
             if not pdf_doc or pdf_doc.page_count == 0:
                 raise ValueError("Geçersiz PDF belgesi")
@@ -177,7 +216,8 @@ class PdfRenderWorker(QObject):
             elif zoom_factor <= 2.0:
                 preview_zoom = min(zoom_factor, 1.8)
             else:
-                preview_zoom = 2.0
+                preview_zoom = self._preview_zoom_cap
+            preview_zoom = min(preview_zoom, self._preview_zoom_cap)
 
             pix = pdf_doc.load_page(0).get_pixmap(
                 matrix=fitz.Matrix(preview_zoom, preview_zoom),
@@ -205,7 +245,7 @@ class PdfRenderWorker(QObject):
 
             # Büyük görüntüleri ölçekle - akıllı boyutlandırma
             w, h = image.width(), image.height()
-            max_dim = 3500  # Bellek optimizasyonu için düşürüldü
+            max_dim = self._max_render_dimension
 
             if max(w, h) > max_dim:
                 scale_factor = max_dim / max(w, h)
@@ -225,7 +265,13 @@ class PdfRenderWorker(QObject):
                 self._last_rendered_zoom = zoom_factor
                 self._last_rendered_signature = document_signature
                 self._last_rendered_image = image
-                logger.debug(f"PdfRenderWorker: emitting image_ready for rev_id={rev_id}, size={image.width()}x{image.height()} bytes={image.sizeInBytes()}")
+                logger.debug(
+                    "PdfRenderWorker: emitting image_ready for rev_id=%s, size=%sx%s bytes=%s",
+                    rev_id,
+                    image.width(),
+                    image.height(),
+                    image.sizeInBytes(),
+                )
                 self.image_ready.emit(image, rev_id)
             else:
                 raise ValueError("Görüntü işleme başarısız")
@@ -263,7 +309,12 @@ class PdfRenderWorker(QObject):
     def render_yazi(self, dokuman_verisi, zoom_factor, yazi_no):
         """Render a yazi (incoming letter) document and emit image that contains the yazi number instead of rev id."""
         logger = logging.getLogger(__name__)
-        logger.debug(f"PdfRenderWorker.render_yazi called for yazi_no={yazi_no}, zoom={zoom_factor}, dokuman_size={len(dokuman_verisi) if dokuman_verisi else 0}")
+        logger.debug(
+            "PdfRenderWorker.render_yazi called for yazi_no=%s, zoom=%s, dokuman_size=%s",
+            yazi_no,
+            zoom_factor,
+            len(dokuman_verisi) if dokuman_verisi else 0,
+        )
 
         pdf_doc = None
         pix = None
@@ -281,6 +332,7 @@ class PdfRenderWorker(QObject):
         try:
             if not dokuman_verisi:
                 raise ValueError("Yazi document empty")
+            fitz = _get_fitz_module()
             pdf_doc = fitz.open(stream=dokuman_verisi, filetype="pdf")
             if not pdf_doc or pdf_doc.page_count == 0:
                 raise ValueError("Geçersiz PDF belgesi")
@@ -290,7 +342,8 @@ class PdfRenderWorker(QObject):
             elif zoom_factor <= 2.0:
                 preview_zoom = min(zoom_factor, 1.8)
             else:
-                preview_zoom = 2.0
+                preview_zoom = self._preview_zoom_cap
+            preview_zoom = min(preview_zoom, self._preview_zoom_cap)
 
             pix = pdf_doc.load_page(0).get_pixmap(matrix=fitz.Matrix(preview_zoom, preview_zoom), alpha=False)
             try:
@@ -305,7 +358,7 @@ class PdfRenderWorker(QObject):
 
             # Scale as needed
             w, h = image.width(), image.height()
-            max_dim = 3500
+            max_dim = self._max_render_dimension
             if max(w, h) > max_dim:
                 scale_factor = max_dim / max(w, h)
                 new_w = max(1, int(w * scale_factor))
@@ -313,11 +366,17 @@ class PdfRenderWorker(QObject):
                 transform = (Qt.SmoothTransformation if zoom_factor > 1.5 else Qt.FastTransformation)
                 image = image.scaled(new_w, new_h, Qt.KeepAspectRatio, transform)
 
-            logger.debug(f"PdfRenderWorker: emitting yazi_image_ready for yazi_no={yazi_no}, size={image.width()}x{image.height()} bytes={image.sizeInBytes()}")
+            logger.debug(
+                "PdfRenderWorker: emitting yazi_image_ready for yazi_no=%s, size=%sx%s bytes=%s",
+                yazi_no,
+                image.width(),
+                image.height(),
+                image.sizeInBytes(),
+            )
             self._cache_letter_render(cache_key, image)
             self.yazi_image_ready.emit(image, yazi_no)
         except Exception as e:
-            logger.error(f"Yazi render error: {e}", exc_info=True)
+            logger.error("Yazi render error: %s", e, exc_info=True)
             try:
                 self.error.emit(f"Yazi render error: {str(e)}", -1)
             except Exception:

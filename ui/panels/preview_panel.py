@@ -29,17 +29,18 @@ class PreviewPanel(QWidget):
         """Set up the user interface components."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
-        # Başlık ve Buton
+        self.baslik_etiketi = QLabel("<b>🔍 Doküman Ön İzleme</b>")
+        self.baslik_etiketi.setStyleSheet("font-size: 11pt; color: #212529;")
+        layout.addWidget(self.baslik_etiketi)
+
+        # Durum metni
         self.onizleme_etiketi = QLabel("Bir revizyon seçerek dokümanı ön izleyin.")
         self.onizleme_etiketi.setAlignment(Qt.AlignCenter)
         self.onizleme_etiketi.setWordWrap(True)
+        self.onizleme_etiketi.setStyleSheet("color: #777; font-size: 10pt;")
         layout.addWidget(self.onizleme_etiketi)
-
-        self.goruntule_btn = QPushButton("Tam Ekran Görüntüle")
-        self.goruntule_btn.setEnabled(False)
-        self.goruntule_btn.clicked.connect(self._on_view_clicked)
-        layout.addWidget(self.goruntule_btn)
 
         # PDF Viewer (ScrollArea içinde Label)
         self.scroll_area = QScrollArea()
@@ -48,6 +49,37 @@ class PreviewPanel(QWidget):
         self.scroll_area.setWidget(self.pdf_label)
         self.scroll_area.setWidgetResizable(True)
         layout.addWidget(self.scroll_area)
+
+        self.goruntule_btn = QPushButton("📄 Dokümanı Tam Ekran Aç")
+        self.goruntule_btn.setEnabled(False)
+        self.goruntule_btn.setFixedHeight(30)
+        self.goruntule_btn.setCursor(Qt.PointingHandCursor)
+        self.goruntule_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #ffffff;
+                color: #2f3542;
+                border: 1px solid #d9dee7;
+                border-radius: 8px;
+                padding: 4px 10px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #eaf4ff;
+                border-color: #6baed6;
+            }
+            QPushButton:pressed {
+                background-color: #d0e8fb;
+            }
+            QPushButton:disabled {
+                background-color: #f4f6f9;
+                color: #9aa3b2;
+                border-color: #e6e9ef;
+            }
+            """
+        )
+        self.goruntule_btn.clicked.connect(self._on_view_clicked)
+        layout.addWidget(self.goruntule_btn)
 
     def show_preview(self, revision: RevizyonModel, pixmap: QPixmap = None):
         self.current_revision = revision

@@ -1,4 +1,4 @@
-# Proje Takip Sistemi v2.1.6
+# Proje Takip Sistemi v2.0.1
 
 Yerelde çalışan, PySide6 tabanlı proje ve revizyon takip uygulaması.
 
@@ -62,8 +62,8 @@ python main.py
 Uygulama içindeki `Güncellemeleri Kontrol Et` akışı doğrudan GitHub `Release` kaynağını kullanır. Sadece `push` yapmak yeterli değildir. İstemcinin yeni sürümü görebilmesi için GitHub üzerinde yeni bir `Release` yayınlanmalıdır.
 
 Mevcut ayarlar:
-- Repo: [SLedgehammer-dev12/Proje_Takip](https://github.com/SLedgehammer-dev12/Proje_Takip)
-- Release sayfası: [latest releases](https://github.com/SLedgehammer-dev12/Proje_Takip/releases/latest)
+- Repo: [karkajinho/Proje_Takip](https://github.com/karkajinho/Proje_Takip)
+- Release sayfası: [latest releases](https://github.com/karkajinho/Proje_Takip/releases/latest)
 
 ### Release yayınlama kuralları
 
@@ -141,6 +141,11 @@ Proje_Takip-main/
 - Çalışma veritabanı ve Excel dosyaları `.gitignore` ile dışarıda bırakılır
 - Release tabanlı güncelleme için checksum dosyası şarttır
 - Public repo kullanıldığında uygulama içi update kontrolü token olmadan da çalışır
+
+Detayli klasor amaclari ve yerel release workspace duzeni icin bkz. [`docs/KLASOR_REHBERI.md`](docs/KLASOR_REHBERI.md).
+Toplu proje yukleme hatalari, log davranisi ve performans karar kayitlari icin bkz. [`docs/BULK_IMPORT_VE_PERFORMANS_REHBERI.md`](docs/BULK_IMPORT_VE_PERFORMANS_REHBERI.md).
+OCR secimi, runtime yerlesimi ve paketleme kurallari icin bkz. [`docs/OCR_ENTEGRASYON_REHBERI.md`](docs/OCR_ENTEGRASYON_REHBERI.md).
+UTF-8 terminal/editor ayarlari ve karakter goruntuleme notlari icin bkz. [`docs/UTF8_GELISTIRME_REHBERI.md`](docs/UTF8_GELISTIRME_REHBERI.md).
 
 ## Development Workflow
 

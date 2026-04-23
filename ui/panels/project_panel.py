@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer, QSignalBlocker
 from PySide6.QtGui import QIcon, QColor, QBrush, QPixmap, QPainter, QPen, QFont
 from typing import List, Dict
+import itertools
 from models import ProjeModel
 
 
@@ -42,6 +43,8 @@ class ProjectPanel(QWidget):
         self.tum_projeler: List[ProjeModel] = []
         self.kategori_items_map: Dict[int, QTreeWidgetItem] = {}
         self._kategori_yolu_cache: Dict[int, str] = {}
+        self._batch_size = 50  # UI'ya projeleri parça parça eklemek için
+        self._pending_project_iter = None
         self.setup_ui()
         # Create default status icons
         self._status_icons = self._create_status_icons()
@@ -138,20 +141,62 @@ class ProjectPanel(QWidget):
         self._populate_ui(projects)
 
     def _populate_ui(self, projects: List[ProjeModel]):
-        # PERFORMANCE: Batch UI updates - disable rendering during population
+        """Projeleri UI'a kademeli olarak yükle (donmayı önler)."""
+        selected_project_id = self._get_selected_project_id()
+
+        # Ön hazırlık: temizle ve kategorileri kur
         self.proje_listesi_widget.setUpdatesEnabled(False)
         self.proje_agaci_widget.setUpdatesEnabled(False)
         list_blocker = QSignalBlocker(self.proje_listesi_widget)
         tree_blocker = QSignalBlocker(self.proje_agaci_widget)
-        selected_project_id = self._get_selected_project_id()
-        
         try:
-            # Listeyi doldur
             self.proje_listesi_widget.clear()
-            for proje in projects:
-                # Status icon and row background
-                emoji = None
-                color = None
+            self.proje_agaci_widget.clear()
+            self.kategori_items_map.clear()
+
+            # Kategorisiz kök
+            kategorisiz_item = QTreeWidgetItem(self.proje_agaci_widget, ["Kategorisiz"])
+            KATEGORI_ID_ROL = Qt.UserRole + 1
+            kategorisiz_item.setData(0, KATEGORI_ID_ROL, 0)
+            kategorisiz_item.setFlags(kategorisiz_item.flags() | Qt.ItemIsDropEnabled)
+            self.kategori_items_map[0] = kategorisiz_item
+
+            # Kategoriler
+            if hasattr(self, "categories") and self.categories:
+                for cid, isim, parent in self.categories:
+                    parent_item = self.kategori_items_map.get(parent) if parent else None
+                    if parent_item:
+                        item = QTreeWidgetItem(parent_item, [isim])
+                    else:
+                        item = QTreeWidgetItem(self.proje_agaci_widget, [isim])
+                    item.setData(0, KATEGORI_ID_ROL, cid)
+                    item.setFlags(item.flags() | Qt.ItemIsDropEnabled)
+                    self.kategori_items_map[cid] = item
+        finally:
+            del list_blocker
+            del tree_blocker
+
+        # Batch ekleme için iterator hazırla
+        self._pending_project_iter = iter(projects)
+
+        def _add_batch():
+            nonlocal kategorisiz_item
+            batch = list(itertools.islice(self._pending_project_iter, self._batch_size))
+            if not batch:
+                # Tüm projeler eklendi
+                self.proje_listesi_widget.setUpdatesEnabled(True)
+                self.proje_agaci_widget.setUpdatesEnabled(True)
+                if not getattr(self, "_tree_expanded_once", False):
+                    try:
+                        self.proje_agaci_widget.expandAll()
+                        self._tree_expanded_once = True
+                    except Exception:
+                        pass
+                self._restore_selection(selected_project_id)
+                return
+
+            for proje in batch:
+                # Liste görünümü
                 if proje.durum == "Onayli":
                     icon = self._status_icons.get('onayli')
                     color = QColor("#d4edda")
@@ -163,96 +208,53 @@ class ProjectPanel(QWidget):
                     color = QColor("#f8d7da")
                 else:
                     icon = self._status_icons.get('default')
+                    color = None
 
                 display_text = f"{proje.proje_kodu} - {proje.proje_ismi}"
                 item = QListWidgetItem(display_text)
-                # set icon if available
-                try:
-                    if 'icon' in locals() and icon:
+                if icon:
+                    try:
                         item.setIcon(icon)
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
                 item.setData(Qt.UserRole, proje)
-
                 if color:
                     item.setBackground(QBrush(color))
-
                 self.proje_listesi_widget.addItem(item)
 
-            # Ağacı doldur
-            self.proje_agaci_widget.clear()
-            self.kategori_items_map.clear()
-
-            # Kategorisiz item'ı oluştur
-            kategorisiz_item = QTreeWidgetItem(self.proje_agaci_widget, ["Kategorisiz"])
-            # Import KATEGORI_ID_ROL from widgets if needed, or use the one defined in main_window
-            # Since we are in ProjectPanel, we can use Qt.UserRole + 1 as defined in widgets.py
-            KATEGORI_ID_ROL = Qt.UserRole + 1
-            kategorisiz_item.setData(0, KATEGORI_ID_ROL, 0)
-            kategorisiz_item.setFlags(kategorisiz_item.flags() | Qt.ItemIsDropEnabled)
-            self.kategori_items_map[0] = kategorisiz_item
-
-            # Kategorileri oluştur
-            if hasattr(self, "categories") and self.categories:
-                for cid, isim, parent in self.categories:
-                    # Parent item'ı bul
-                    parent_item = None
-                    if parent:
-                        parent_item = self.kategori_items_map.get(parent)
-
-                    if parent_item:
-                        item = QTreeWidgetItem(parent_item, [isim])
-                    else:
-                        item = QTreeWidgetItem(self.proje_agaci_widget, [isim])
-
-                    item.setData(0, KATEGORI_ID_ROL, cid)
-                    item.setFlags(item.flags() | Qt.ItemIsDropEnabled)
-                    self.kategori_items_map[cid] = item
-
-            # Build tree view with projects
-            for proje in projects:
-                # Ağaç görünümü için de benzer mantık (ikon kullanıyoruz)
-                icon = None
+                # Ağaç görünümü
+                icon_tree = None
                 if proje.durum == "Onayli":
-                    icon = self._status_icons.get('onayli')
+                    icon_tree = self._status_icons.get('onayli')
                 elif proje.durum == "Notlu Onayli":
-                    icon = self._status_icons.get('notlu_onayli')
+                    icon_tree = self._status_icons.get('notlu_onayli')
                 elif proje.durum == "Reddedildi":
-                    icon = self._status_icons.get('reddedildi')
+                    icon_tree = self._status_icons.get('reddedildi')
 
-                # Kategori item'ını bul
                 kategori_id = proje.kategori_id if proje.kategori_id is not None else 0
                 parent_item = self.kategori_items_map.get(kategori_id, kategorisiz_item)
 
-                item = QTreeWidgetItem(parent_item)
-                item.setText(0, f"{proje.proje_kodu} - {proje.proje_ismi}")
-                try:
-                    if icon:
-                        item.setIcon(0, icon)
-                except Exception:
-                    pass
-                item.setData(0, Qt.UserRole, proje)
+                t_item = QTreeWidgetItem(parent_item)
+                t_item.setText(0, display_text)
+                if icon_tree:
+                    try:
+                        t_item.setIcon(0, icon_tree)
+                    except Exception:
+                        pass
+                t_item.setData(0, Qt.UserRole, proje)
 
-                # Ağaçta arka plan rengi yerine ikon veya metin rengi tercih edilebilir
-                # Ancak talep üzerine dolgu rengi verelim
-                if proje.durum == "Onayli":  # Fixed
-                    item.setBackground(0, QColor("#d4edda"))
-                elif proje.durum == "Notlu Onayli":  # Fixed
-                    item.setBackground(0, QColor("#fff3cd"))
+                if proje.durum == "Onayli":
+                    t_item.setBackground(0, QColor("#d4edda"))
+                elif proje.durum == "Notlu Onayli":
+                    t_item.setBackground(0, QColor("#fff3cd"))
                 elif proje.durum == "Reddedildi":
-                    item.setBackground(0, QColor("#f8d7da"))
+                    t_item.setBackground(0, QColor("#f8d7da"))
 
-            if not getattr(self, "_tree_expanded_once", False):
-                self.proje_agaci_widget.expandAll()
-                self._tree_expanded_once = True
-        finally:
-            del list_blocker
-            del tree_blocker
-            # PERFORMANCE: Re-enable rendering after all items added
-            self.proje_listesi_widget.setUpdatesEnabled(True)
-            self.proje_agaci_widget.setUpdatesEnabled(True)
+            # Bir sonraki parti için event loop'a dön
+            QTimer.singleShot(0, _add_batch)
 
-        self._restore_selection(selected_project_id)
+        # İlk parti
+        QTimer.singleShot(0, _add_batch)
 
     def _create_status_icons(self, size: int = 16) -> dict:
         """Return a dict of QIcons for statuses (onayli, notlu_onayli, reddedildi, default).

@@ -52,7 +52,11 @@ class MainController:
                 self.render_thread.setParent(self.window)
             except Exception:
                 pass
-            self.pdf_worker = PdfRenderWorker()
+            self.pdf_worker = PdfRenderWorker(
+                performance_mode=bool(
+                    getattr(self.window, "is_performance_mode_enabled", lambda: False)()
+                )
+            )
             self.pdf_worker.moveToThread(self.render_thread)
             # Connect signals from window to worker and worker to window
             # window._start_pdf_render was introduced in AnaPencere
@@ -75,6 +79,14 @@ class MainController:
                 (self.pdf_worker.error, self.window._on_image_error),
             ]
             self.render_thread.start()
+        except Exception:
+            pass
+
+    def configure_pdf_worker_profile(self, performance_mode: bool):
+        try:
+            worker = getattr(self, "pdf_worker", None)
+            if worker is not None and hasattr(worker, "configure_performance_mode"):
+                worker.configure_performance_mode(performance_mode)
         except Exception:
             pass
 

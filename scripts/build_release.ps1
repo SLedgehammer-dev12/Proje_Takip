@@ -29,6 +29,34 @@ function New-PyInstallerSourceDest {
     return "$Source`:$Destination"
 }
 
+function Get-PyInstallerTreeDataArgs {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    if (-not (Test-Path $SourceRoot)) {
+        return @()
+    }
+
+    $entries = @()
+    $sourceRootWithSeparator = ((Resolve-Path $SourceRoot).Path).TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+    foreach ($file in Get-ChildItem -Path $SourceRoot -Recurse -File) {
+        $relativePath = $file.FullName.Substring($sourceRootWithSeparator.Length)
+        $relativeDir = Split-Path -Path $relativePath -Parent
+        $targetDir = $DestinationRoot
+        if ($relativeDir -and $relativeDir -ne ".") {
+            $targetDir = Join-Path $DestinationRoot $relativeDir
+        }
+        $entries += "--add-data"
+        $entries += (New-PyInstallerSourceDest -Source $file.FullName -Destination $targetDir)
+    }
+
+    return $entries
+}
+
 function New-VersionInfoFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -124,6 +152,8 @@ $assetName = "ProjeTakip-{0}-windows-x64.zip" -f $Version
 $assetPath = Join-Path $releaseDir $assetName
 $checksumPath = Join-Path $releaseDir "SHA256SUMS"
 $mainScript = Join-Path $repoRoot "main.py"
+$ocrRuntimeRoot = Join-Path $repoRoot "ocr\\tesseract"
+$ocrRuntimeExe = Join-Path $ocrRuntimeRoot "tesseract.exe"
 
 if ($IsLinux -or $IsMacOS) {
     throw "Windows release paketi bu script ile sadece Windows ortaminda uretilmelidir."
@@ -155,6 +185,13 @@ $pyinstallerArgs = @(
     "--add-data", (New-PyInstallerSourceDest -Source (Join-Path $repoRoot "guncelleme_notlari.txt") -Destination "."),
     $mainScript
 )
+
+if (Test-Path $ocrRuntimeExe) {
+    Write-Host "OCR runtime bundle edilecek: $ocrRuntimeRoot"
+    $pyinstallerArgs += Get-PyInstallerTreeDataArgs -SourceRoot $ocrRuntimeRoot -DestinationRoot "ocr\\tesseract"
+} elseif (Test-Path $ocrRuntimeRoot) {
+    Write-Host "Uyari: OCR klasoru bulundu ancak tesseract.exe eksik oldugu icin bundle edilmiyor: $ocrRuntimeRoot"
+}
 
 Write-Host "PyInstaller build basliyor: $Version"
 & pyinstaller @pyinstallerArgs

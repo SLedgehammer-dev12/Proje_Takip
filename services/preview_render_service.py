@@ -9,6 +9,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Optional
 
+from i18n import tr
 from models import RevizyonModel
 from utils import get_class_logger
 
@@ -32,10 +33,22 @@ class PreviewRenderService:
         self._letter_document_cache: OrderedDict[tuple[str, str, str], bytes] = (
             OrderedDict()
         )
+        self.performance_mode = False
 
     def clear_cache(self):
         self._document_cache.clear()
         self._letter_document_cache.clear()
+
+    def configure_performance_mode(self, enabled: bool):
+        self.performance_mode = bool(enabled)
+        if self.performance_mode:
+            self.max_cache_size = 2
+            self.max_letter_cache_size = 2
+        else:
+            self.max_cache_size = 5
+            self.max_letter_cache_size = 8
+        self._trim_cache(self._document_cache, self.max_cache_size)
+        self._trim_cache(self._letter_document_cache, self.max_letter_cache_size)
 
     def invalidate_revision(self, revision_id: Optional[int]):
         if revision_id is None:
@@ -60,7 +73,7 @@ class PreviewRenderService:
             return PreviewLoadResult(status="missing_revision")
 
         if revision.dokuman_durumu != "Var":
-            return PreviewLoadResult(status="no_document_flag", message="Doküman yok")
+            return PreviewLoadResult(status="no_document_flag", message=tr("Doküman yok"))
 
         rev_id = revision.id
         document_bytes = self._document_cache.get(rev_id)
@@ -110,7 +123,13 @@ class PreviewRenderService:
         cache_key = self._normalize_letter_cache_key(yazi_no, yazi_tarih, yazi_turu)
         document_bytes = self._letter_document_cache.get(cache_key)
         if document_bytes is None:
+            # Önce bildirilen türle dene, sonra türsüz (geniş) fallback
             document_tuple = self.db.yazi_dokumani_getir(yazi_no, yazi_tarih, yazi_turu)
+            fallback_used = False
+            if not document_tuple:
+                document_tuple = self.db.yazi_dokumani_getir(yazi_no, yazi_tarih, None)
+                fallback_used = document_tuple is not None
+
             if not document_tuple:
                 self.logger.debug(
                     "Letter preview prepare: no document row for yazi_no=%s type=%s",
@@ -119,7 +138,7 @@ class PreviewRenderService:
                 )
                 return PreviewLoadResult(
                     status="missing_letter_document",
-                    message="Bu revizyona ait yazı dokümanı bulunamadı.",
+                    message=tr("Bu revizyona ait yazı dokümanı bulunamadı."),
                 )
 
             document_bytes = document_tuple[1]
@@ -132,7 +151,9 @@ class PreviewRenderService:
                     status="invalid_letter_document",
                     message=validation_message,
                 )
-            self._cache_letter_document(cache_key, document_bytes)
+            # Fallback ile bulduysak cache key'i türsüz (ANY) tutarak tekrar kullanılabilir yap
+            cache_to_use = cache_key if not fallback_used else self._normalize_letter_cache_key(yazi_no, yazi_tarih, "any")
+            self._cache_letter_document(cache_to_use, document_bytes)
         else:
             self._touch_letter_cache(cache_key)
             validation_message = self._validate_document_bytes(
@@ -149,12 +170,7 @@ class PreviewRenderService:
         return PreviewLoadResult(status="ready", document_bytes=document_bytes)
 
     def _cache_document(self, revision_id: int, document_bytes: bytes):
-        if len(self._document_cache) >= self.max_cache_size:
-            try:
-                first_key = next(iter(self._document_cache))
-                del self._document_cache[first_key]
-            except (StopIteration, KeyError, RuntimeError):
-                pass
+        self._trim_cache(self._document_cache, self.max_cache_size - 1)
         self._document_cache[revision_id] = document_bytes
 
     def _touch_document_cache(self, revision_id: int):
@@ -166,12 +182,7 @@ class PreviewRenderService:
     def _cache_letter_document(
         self, cache_key: tuple[str, str, str], document_bytes: bytes
     ):
-        if len(self._letter_document_cache) >= self.max_letter_cache_size:
-            try:
-                first_key = next(iter(self._letter_document_cache))
-                del self._letter_document_cache[first_key]
-            except (StopIteration, KeyError, RuntimeError):
-                pass
+        self._trim_cache(self._letter_document_cache, self.max_letter_cache_size - 1)
         self._letter_document_cache[cache_key] = document_bytes
 
     def _touch_letter_cache(self, cache_key: tuple[str, str, str]):
@@ -185,6 +196,14 @@ class PreviewRenderService:
     ) -> tuple[str, str, str]:
         return (yazi_no.strip(), (yazi_tarih or "").strip(), yazi_turu.strip())
 
+    def _trim_cache(self, cache: OrderedDict, max_size: int):
+        target_size = max(0, int(max_size))
+        while len(cache) > target_size:
+            try:
+                cache.popitem(last=False)
+            except (KeyError, RuntimeError):
+                break
+
     def _validate_document_bytes(
         self, revision_id: int, document_bytes: Optional[bytes]
     ) -> Optional[str]:
@@ -194,18 +213,18 @@ class PreviewRenderService:
                     "Invalid preview document type for rev_id=%s",
                     revision_id,
                 )
-                return "Doküman önizlenemiyor: geçersiz dosya"
+                return tr("Doküman önizlenemiyor: geçersiz dosya")
             if len(document_bytes) < 5 or document_bytes[:4] != b"%PDF":
                 self.logger.error(
                     "Invalid PDF header for rev_id=%s, size=%s",
                     revision_id,
                     len(document_bytes),
                 )
-                return "Doküman önizlenemiyor: bozuk/uyumsuz dosya"
+                return tr("Doküman önizlenemiyor: bozuk/uyumsuz dosya")
         except Exception:
             self.logger.exception(
                 "Preview document validation failed for rev_id=%s",
                 revision_id,
             )
-            return "Doküman önizlenemiyor: geçersiz dosya"
+            return tr("Doküman önizlenemiyor: geçersiz dosya")
         return None

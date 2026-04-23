@@ -9,16 +9,39 @@ import logging
 import re
 import sys
 import subprocess
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from datetime import datetime
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QProgressDialog, QWidget
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import QApplication
 from utils import get_class_logger
 
 
-class ReportService:
+class _PdfReportWorker(QObject):
+    finished = Signal(bool, str, str)
+
+    def __init__(
+        self,
+        db_path: str,
+        file_path: str,
+        report_func: Callable[[str, str], bool],
+    ):
+        super().__init__()
+        self.db_path = db_path
+        self.file_path = file_path
+        self.report_func = report_func
+
+    @Slot()
+    def run(self):
+        try:
+            success = bool(self.report_func(self.db_path, self.file_path))
+            self.finished.emit(success, self.file_path, "")
+        except Exception as exc:
+            self.finished.emit(False, self.file_path, str(exc))
+
+
+class ReportService(QObject):
     """
     Service class for report generation and Excel export operations.
 
@@ -33,9 +56,13 @@ class ReportService:
             db: Database instance
             parent: Parent widget for dialogs
         """
+        super().__init__(parent)
         self.db = db
         self.parent = parent
         self.logger = get_class_logger(self)
+        self._pdf_report_thread: Optional[QThread] = None
+        self._pdf_report_worker: Optional[_PdfReportWorker] = None
+        self._pdf_report_progress: Optional[QProgressDialog] = None
 
     # Corporate color palette
     COLORS = {
@@ -680,6 +707,69 @@ class ReportService:
             columns=["Proje Türü", "Sayı", "Onaylı", "Notlu Onaylı", "Reddedilen"],
         )
 
+    def _cleanup_pdf_report_worker(self):
+        thread = self._pdf_report_thread
+        worker = self._pdf_report_worker
+        self._pdf_report_thread = None
+        self._pdf_report_worker = None
+
+        if worker is not None:
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
+        if thread is not None:
+            try:
+                thread.deleteLater()
+            except Exception:
+                pass
+
+    @Slot(bool, str, str)
+    def _on_pdf_report_finished(
+        self, success: bool, file_path: str, error_message: str
+    ):
+        progress = self._pdf_report_progress
+        self._pdf_report_progress = None
+        if progress is not None:
+            try:
+                progress.close()
+                progress.deleteLater()
+            except Exception:
+                pass
+
+        if error_message:
+            self.logger.error("Rapor olusturma hatasi: %s", error_message)
+            QMessageBox.warning(
+                self.parent,
+                "Hata",
+                "Rapor oluşturulurken bir hata oluştu.\n"
+                "Lütfen log dosyasını kontrol edin.",
+            )
+            return
+
+        if success:
+            answer = QMessageBox.information(
+                self.parent,
+                "Rapor Oluşturuldu",
+                f"PDF raporu başarıyla oluşturuldu:\n\n{file_path}\n\n"
+                "Raporu şimdi açmak ister misiniz?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer == QMessageBox.Yes:
+                self._open_file(file_path)
+
+            self.logger.info("Rapor başarıyla oluşturuldu")
+            return
+
+        QMessageBox.warning(
+            self.parent,
+            "Hata",
+            "Rapor oluşturulurken bir hata oluştu.\n"
+            "Lütfen log dosyasını kontrol edin.",
+        )
+        self.logger.error("Rapor oluşturulamadı")
+
     def generate_pdf_report(self) -> bool:
         """
         Generate PDF report for projects.
@@ -710,6 +800,44 @@ class ReportService:
 
             if not file_path:
                 return False  # User cancelled
+
+            if self._pdf_report_thread is not None:
+                QMessageBox.information(
+                    self.parent,
+                    "Rapor Hazırlanıyor",
+                    "Bir rapor oluşturma işlemi zaten devam ediyor.",
+                )
+                return False
+
+            self.logger.info("Rapor oluşturma arka planda başlatılıyor: %s", file_path)
+
+            progress = QProgressDialog("Rapor oluşturuluyor...", "", 0, 0, self.parent)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            try:
+                progress.setCancelButton(None)
+            except Exception:
+                pass
+            progress.show()
+
+            thread = QThread(self)
+            worker = _PdfReportWorker(self.db.db_adi, file_path, rapor_olustur_func)
+            worker.moveToThread(thread)
+
+            worker.finished.connect(self._on_pdf_report_finished)
+            worker.finished.connect(thread.quit)
+            thread.started.connect(worker.run)
+            thread.finished.connect(self._cleanup_pdf_report_worker)
+
+            self._pdf_report_progress = progress
+            self._pdf_report_thread = thread
+            self._pdf_report_worker = worker
+
+            thread.start()
+            return True
 
             self.logger.info(f"Rapor oluşturuluyor: {file_path}")
 

@@ -10,6 +10,7 @@ from typing import Optional
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
+from i18n import tr
 from letter_resolution import (
     normalize_revision_letter_type,
     resolve_revision_letter_candidate,
@@ -92,6 +93,13 @@ class DocumentService:
             document = self.db.yazi_dokumani_getir(yazi_no, yazi_tarih, normalized)
             if document:
                 return document, normalized
+        # Son çare: yazı türünü göz ardı ederek sadece numaraya göre ara
+        try:
+            document = self.db.yazi_dokumani_getir(yazi_no, yazi_tarih, None)
+            if document:
+                return document, "any"
+        except Exception:
+            pass
         return None, tried
 
     def resolve_letter_payload(
@@ -116,8 +124,12 @@ class DocumentService:
             resolution_note = None
             if resolved_lookup and resolved_lookup != candidate.logical_type:
                 resolution_note = (
-                    f"Yazı türü '{candidate.logical_type}' yerine '{resolved_lookup}' "
-                    f"fallback'i ile çözüldü."
+                    tr(
+                        "Yazı türü '{logical_type}' yerine '{resolved_lookup}' fallback'i ile çözüldü."
+                    ).format(
+                        logical_type=candidate.logical_type,
+                        resolved_lookup=resolved_lookup,
+                    )
                 )
                 self.logger.warning(
                     "Yazı fallback ile çözüldü: rev_id=%s, yazi_no=%s, logical=%s, lookup=%s",
@@ -179,15 +191,19 @@ class DocumentService:
     def open_revision_document(self, rev: Optional[RevizyonModel]) -> bool:
         """Open the revision document represented by the given model."""
         if not rev:
-            QMessageBox.warning(self.parent, "Uyarı", "Açılacak revizyon bulunamadı.")
+            QMessageBox.warning(
+                self.parent,
+                tr("Uyarı"),
+                tr("Açılacak revizyon bulunamadı."),
+            )
             return False
 
         document = self.db.dokumani_getir(rev.id)
         if not document:
             QMessageBox.warning(
                 self.parent,
-                "Uyarı",
-                "Bu revizyona ait doküman bulunamadı.",
+                tr("Uyarı"),
+                tr("Bu revizyona ait doküman bulunamadı."),
             )
             return False
 
@@ -196,7 +212,7 @@ class DocumentService:
             filename,
             file_data,
             temp_prefix=f"rev_{rev.id}",
-            error_title="Açma Hatası",
+            error_title=tr("Açma Hatası"),
         )
         if opened:
             self.logger.info("Revizyon dokümanı açıldı: rev_id=%s", rev.id)
@@ -207,8 +223,8 @@ class DocumentService:
         if not payload or payload.get("kind") != "letter":
             QMessageBox.warning(
                 self.parent,
-                "Uyarı",
-                "Açılacak yazı dokümanı bulunamadı.",
+                tr("Uyarı"),
+                tr("Açılacak yazı dokümanı bulunamadı."),
             )
             return False
 
@@ -220,8 +236,8 @@ class DocumentService:
         if not yazi_no or not yazi_turu:
             QMessageBox.warning(
                 self.parent,
-                "Uyarı",
-                "Yazı dokümanı bilgisi eksik.",
+                tr("Uyarı"),
+                tr("Yazı dokümanı bilgisi eksik."),
             )
             return False
 
@@ -234,8 +250,10 @@ class DocumentService:
         if not document:
             QMessageBox.information(
                 self.parent,
-                "Yazı Bulunamadı",
-                f"'{yazi_no}' numaralı yazı dokümanı bulunamadı.",
+                tr("Yazı Bulunamadı"),
+                tr("'{yazi_no}' numaralı yazı dokümanı bulunamadı.").format(
+                    yazi_no=yazi_no
+                ),
             )
             return False
 
@@ -244,7 +262,7 @@ class DocumentService:
             filename,
             file_data,
             temp_prefix=f"yazi_{yazi_no}",
-            error_title="Açma Hatası",
+            error_title=tr("Açma Hatası"),
         )
         if opened:
             self.logger.info(

@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v2.1.9.2"
+APP_VERSION = "v3.0"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,12 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v3.0": [
+        "METIN: Legacy kaynak dosyalardaki mojibake metinler kaynaginda temizlendi; kritik dialog ve ana pencere akislari artik gercek UTF-8 Turkce karakterlerle geliyor.",
+        "KALITE: Kaynak repoya .editorconfig, git eol kurallari ve UTF-8 terminal yardimcilari eklendi; gelistirme ortaminda yeni encoding bozulmalarinin tekrar repo'ya sizmasi zorlastirildi.",
+        "DAGITIM: Paketli surum log, guncelleme notu, varsayilan veritabani ve yedekleri kullanici profili altinda sakliyor; korumali klasorden calisma nedeniyle yonetici ihtiyaci doguran acilis hatasi giderildi.",
+        "DOGRULAMA: Encoding hijyeni icin kaynak-tarama testi eklendi; release oncesi tam pytest paketi ve import smoke testi ile regression kapsami genisletildi.",
+    ],
     "v2.1.9.2": [
         "DAGITIM: Paketli surum artik log, guncelleme notu, varsayilan veritabani ve yedekleri kullanici profili altinda sakliyor; korumali klasorden calisma nedeniyle yonetici ihtiyaci doguran acilis hatasi giderildi.",
         "GECIS: Eski portable dagitimdaki projeler.db ilk acilista kullanici profiline kopyalanarak veri kaybi olmadan yeni dizin yapisina alinabiliyor.",

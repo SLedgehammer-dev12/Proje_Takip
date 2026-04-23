@@ -306,7 +306,10 @@ def get_latest_release_info(
 
 def _version_tuple(v: str) -> List[int]:
     m = re.findall(r"\d+", str(v))
-    return [int(x) for x in m]
+    parts = [int(x) for x in m]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return parts or [0]
 
 
 def is_newer(current: str, latest: str) -> bool:

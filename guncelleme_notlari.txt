@@ -1,5 +1,10 @@
 ﻿PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.0 ---
+  * METIN: Legacy kaynak dosyalardaki mojibake metinler kaynaginda temizlendi; kritik dialog ve ana pencere akislarinda gercek UTF-8 Turkce karakterlere gecildi.
+  * KALITE: Repo seviyesinde UTF-8 editor, terminal ve satir sonu kurallari eklendi; yeni karakter bozulmalarinin tekrar kaynaga sizmasi zorlastirildi.
+  * DAGITIM: Paketli surum log, guncelleme notu, varsayilan veritabani ve yedekleri kullanici profili altinda sakliyor; yonetici olarak calistirma ihtiyaci doguran acilis sorunu giderildi.
+  * DOGRULAMA: Encoding hijyeni testi eklendi, tam pytest paketi ve import smoke testleriyle release regression kapsami genisletildi.
 --- Sürüm: v2.1.9.2 ---
   * DAGITIM: Paketli surum artik log, guncelleme notu, varsayilan veritabani ve yedekleri kullanici profili altinda sakliyor; korumali klasorden calisma nedeniyle yonetici ihtiyaci doguran acilis hatasi giderildi.
   * GECIS: Eski portable dagitimdaki projeler.db ilk acilista kullanici profiline kopyalanarak veri kaybi olmadan yeni dizin yapisina alinabiliyor.

@@ -1,5 +1,64 @@
 # Değişiklik Günlüğü
 
+# Değişiklik Günlüğü
+
+## v2.1.8.5 (16 Nisan 2026)
+
+### Performans Modu
+- Görünüm menüsüne kalıcı `Performans Modu` eklendi; düşük donanımlı bilgisayarlarda daha sade Fusion/native görünüm ve hafif profil uygulanıyor.
+- Bellek etiketi daha seyrek güncelleniyor; revizyon ön izleme varsayılan zoom ve render boyutları düşürüldü.
+
+### Ön İzleme ve Log
+- Yazı ön izleme performans modunda otomatik render edilmiyor; manuel `Ön İzlemeyi Yükle` düğmesi ile ihtiyaç halinde açılıyor.
+- PDF render worker ve preview cache limitleri düşürüldü; düşük RAM'li sistemlerde ani bellek sıçramaları azaltıldı.
+- Performans modunda canlı log izleme kapatılıyor ve log seviyesi `ERROR/CRITICAL`'a indiriliyor.
+
+## v2.1.8.4 (16 Nisan 2026)
+
+### Arayüz ve Kullanım
+- Proje dokümanı ön izleme paneli ile yazı ön izleme paneli daha dengeli varsayılan yüksekliklerle açılıyor.
+- Proje ve yazı için tam ekran aç butonları aynı seviyede hizalandı; kullanıcı akışında erişim daha tutarlı hale geldi.
+
+### Veri Bütünlüğü ve Performans
+- Çoklu proje yüklemede `Kategorisiz` seçiminin `FOREIGN KEY constraint failed` üretmesine neden olan kategori sentinel akışı düzeltildi.
+- Geçersiz veya silinmiş kategori kimlikleri veritabanı katmanında güvenli biçimde `NULL` olarak normalize ediliyor.
+- Log yazımı kuyruklu arka plan işleyicisine taşındı; canlı log paneli artık sadece sekme aktifken bağlanıyor.
+
+## v2.1.8.3 (2 Nisan 2026)
+
+### Proje Yükleme
+- Async proje yükleme boş dönerse 2 saniye içinde senkron fallback devreye giriyor; dil değiştirme ihtiyacı ortadan kalktı.
+- Proje yüklenemediğinde status bar mesajları iyileştirildi.
+- Yazı önizleme: Proje dokümanı olmayan satırlarda bile yazı dokümanı tip eşleşmezse türsüz fallback ile önizleme açılıyor.
+
+## v2.1.8.2 (1 Nisan 2026)
+
+### Log Performansı
+- Log paneline "Logları Temizle" butonu eklendi; tablo ve dosya tek tıkla boşaltılabiliyor.
+- Canlı log satırları 2000 ile sınırlandırıldı; fazlası otomatik kırpılıyor, UI kasılmaları önlendi.
+
+## v2.1.8.1 (1 Nisan 2026)
+
+### Hata Düzeltmeleri
+- Eski sürümden kalan QSettings anahtarları okunamadığı için varsayılan boş veritabanı açılabiliyordu; tüm legacy uygulama adları taranarak doğru DB otomatik bulunuyor.
+- DataLoadWorker, eksik veritabanı yolunda sessizce yeni dosya oluşturmak yerine kullanıcıya hata döndürüyor; yanlış yol yüzünden “Toplam Proje: 0” görünmesi engellendi.
+- Yazı dokümanı önizlemesi, tür eşleşmesi tutmadığında da numaraya göre fallback arama yapıyor; doküman var ama preview boş kalan satırlar düzeldi.
+
+## v2.1.8 (1 Nisan 2026)
+
+### Hata Düzeltmeleri
+- Veritabanı değiştirildi status mesajında tanımsız `db_name` hatası giderildi.
+- Detay panelinde UTF-8/LATIN-1 karışan anahtarlar için fallback eklendi; “Proje İsmi” KeyError’u ve detayların yüklenmemesi düzeltildi.
+
+## v2.1.7 (1 Nisan 2026)
+
+### Performans ve Kararlılık
+
+- Proje listesi yükleme işlemi arka planda (QThread) yapılıyor; UI donmaları belirgin şekilde azaldı.
+- Revizyon listesi asenkron çekilip kademeli (batch) çiziliyor; sekme/geçiş hızları iyileştirildi.
+- Ağ paylaşımı (UNC) üzerindeki veritabanları için WAL devre dışı bırakıldı, `journal_mode=DELETE + synchronous=FULL` uygulanıyor.
+- Kapanışta arka plan işçileri için temizleme ve geç sinyal filtreleri eklendi.
+
 ## v2.1.6 (31 Mart 2026)
 
 ### Dil ve Kullanılabilirlik

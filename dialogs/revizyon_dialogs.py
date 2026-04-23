@@ -23,6 +23,47 @@ from models import Durum
 from utils import dosyadan_tarih_sayi_cikar
 
 
+def _get_document_intelligence_service(widget):
+    current = widget
+    while current is not None:
+        try:
+            service = getattr(current, "document_intelligence_service", None)
+        except Exception:
+            service = None
+        if service is not None:
+            return service
+        try:
+            current = current.parent()
+        except Exception:
+            current = None
+    return None
+
+
+def _extract_letter_metadata(widget, path: str) -> Dict[str, str]:
+    merged = dosyadan_tarih_sayi_cikar(os.path.basename(path)) or {}
+    service = _get_document_intelligence_service(widget)
+    if service is None:
+        return merged
+
+    try:
+        analyzed = service.analyze_letter_document(path)
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Belge analizi başarısız (%s): %s", path, exc)
+        return merged
+
+    if analyzed.get("yazi_no") and not merged.get("sayi"):
+        merged["sayi"] = analyzed["yazi_no"]
+    if analyzed.get("yazi_tarih") and not merged.get("tarih"):
+        merged["tarih"] = analyzed["yazi_tarih"]
+    if analyzed.get("konu"):
+        merged["konu"] = analyzed["konu"]
+    if analyzed.get("kurum"):
+        merged["kurum"] = analyzed["kurum"]
+    if analyzed.get("aciklama"):
+        merged["aciklama"] = analyzed["aciklama"]
+    return merged
+
+
 class YeniRevizyonDialog(QDialog):
     def __init__(
         self,
@@ -111,6 +152,10 @@ class YeniRevizyonDialog(QDialog):
         layout.addRow("Revizyon Kodu:", self.rev_kodu_entry)
         self.aciklama_entry = QLineEdit(self.on_veri.get("aciklama", ""))
         layout.addRow("Açıklama:", self.aciklama_entry)
+        self.konu_entry = QLineEdit(self.on_veri.get("yazi_konu", ""))
+        layout.addRow("Konu:", self.konu_entry)
+        self.kurum_entry = QLineEdit(self.on_veri.get("yazi_kurum", ""))
+        layout.addRow("Kurum:", self.kurum_entry)
         if is_editing:
             tse_layout = QVBoxLayout()
             tse_layout.setContentsMargins(0, 0, 0, 0)
@@ -226,6 +271,18 @@ class YeniRevizyonDialog(QDialog):
             self.dosya_yolu = self.initial_dosya_yolu
             self.rev_dosya_etiketi.setText(os.path.basename(self.initial_dosya_yolu))
 
+    def _apply_letter_metadata_fields(self, bilgiler: Dict[str, str]) -> None:
+        konu = (bilgiler.get("konu") or "").strip()
+        kurum = (bilgiler.get("kurum") or "").strip()
+        aciklama = (bilgiler.get("aciklama") or "").strip()
+
+        if konu and not self.konu_entry.text().strip():
+            self.konu_entry.setText(konu)
+        if kurum and not self.kurum_entry.text().strip():
+            self.kurum_entry.setText(kurum)
+        if aciklama and not self.aciklama_entry.text().strip():
+            self.aciklama_entry.setText(aciklama)
+
     def rev_dosya_sec(self):
         yol, _ = QFileDialog.getOpenFileName(
             self,
@@ -260,9 +317,10 @@ class YeniRevizyonDialog(QDialog):
                 logger.info(f"Yeni gelen yazı dosyası seçildi: {yol}")
             except Exception:
                 pass
-            if bilgiler := dosyadan_tarih_sayi_cikar(os.path.basename(yol)):
+            if bilgiler := _extract_letter_metadata(self, yol):
                 self.yazi_no_combo.setCurrentText(bilgiler["sayi"])
                 self.tarih_entry.setText(bilgiler["tarih"])
+                self._apply_letter_metadata_fields(bilgiler)
 
     def onay_dosya_sec(self):
         yol, _ = QFileDialog.getOpenFileName(
@@ -279,9 +337,10 @@ class YeniRevizyonDialog(QDialog):
                 logger.info(f"Yeni onay yazısı dosyası seçildi: {yol}")
             except Exception:
                 pass
-            if bilgiler := dosyadan_tarih_sayi_cikar(os.path.basename(yol)):
+            if bilgiler := _extract_letter_metadata(self, yol):
                 self.onay_yazi_no_entry.setText(bilgiler["sayi"])
                 self.onay_yazi_tarih_entry.setText(bilgiler["tarih"])
+                self._apply_letter_metadata_fields(bilgiler)
 
     def red_dosya_sec(self):
         yol, _ = QFileDialog.getOpenFileName(
@@ -298,9 +357,10 @@ class YeniRevizyonDialog(QDialog):
                 logger.info(f"Yeni red yazısı dosyası seçildi: {yol}")
             except Exception:
                 pass
-            if bilgiler := dosyadan_tarih_sayi_cikar(os.path.basename(yol)):
+            if bilgiler := _extract_letter_metadata(self, yol):
                 self.red_yazi_no_entry.setText(bilgiler["sayi"])
                 self.red_yazi_tarih_entry.setText(bilgiler["tarih"])
+                self._apply_letter_metadata_fields(bilgiler)
 
     def yazi_secilince(self, text):
         selected = self._mevcut_yazi_map.get(text)
@@ -357,6 +417,8 @@ class YeniRevizyonDialog(QDialog):
         return {
             "revizyon_kodu": self.rev_kodu_entry.text().strip(),
             "aciklama": self.aciklama_entry.text().strip(),
+            "yazi_konu": self.konu_entry.text().strip() or None,
+            "yazi_kurum": self.kurum_entry.text().strip() or None,
             "dosya_yolu": self.dosya_yolu,
             "yeni_rev_dosya_yolu": self.yeni_rev_dosya_yolu,
             "gelen_yazi_no": self.yazi_no_combo.currentText().split("|", 1)[0].strip() or None,
@@ -441,7 +503,7 @@ class OnayRedDialog(QDialog):
         if yol:
             self.dosya_yolu = yol
             self.dosya_etiketi.setText(os.path.basename(yol))
-            if bilgiler := dosyadan_tarih_sayi_cikar(os.path.basename(yol)):
+            if bilgiler := _extract_letter_metadata(self, yol):
                 self.yazi_no_combo.setCurrentText(bilgiler["sayi"])
                 self.tarih_entry.setText(bilgiler["tarih"])
 
@@ -723,7 +785,7 @@ class YaziTuruSecDialog(QDialog):
         except Exception:
             pass
         # Try to parse from filename first
-        if bilgiler := dosyadan_tarih_sayi_cikar(os.path.basename(yol)):
+        if bilgiler := _extract_letter_metadata(self, yol):
             self.gelen_yazi_no_entry.setText(bilgiler["sayi"])
             self.gelen_yazi_tarih_entry.setText(bilgiler["tarih"])
             return
@@ -762,7 +824,7 @@ class YaziTuruSecDialog(QDialog):
         if not yol:
             return
         self.giden_dosya_etiket.setText(os.path.basename(yol))
-        if bilgiler := dosyadan_tarih_sayi_cikar(os.path.basename(yol)):
+        if bilgiler := _extract_letter_metadata(self, yol):
             self.giden_yazi_no_entry.setText(bilgiler["sayi"])
             self.giden_yazi_tarih_entry.setText(bilgiler["tarih"])
             return

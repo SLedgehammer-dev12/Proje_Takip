@@ -16,7 +16,7 @@ import sys
 
 
 def demo():
-    owner = "SLedgehammer-dev12"
+    owner = "karkajinho"
     repo = "Proje_Takip"
     current_version = os.environ.get("APP_VERSION", "1.3")
     # We expect the release asset filename to contain 'ProjeTakip' and end with .exe

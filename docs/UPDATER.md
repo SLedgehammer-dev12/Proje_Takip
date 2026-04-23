@@ -15,6 +15,11 @@ Basic flow (current repository flow):
 3. If a newer version is found, the app shows release notes and lets the user download the asset into `Downloads`.
 4. Before offering the asset, the app expects a checksum asset such as `SHA256SUMS` or `<asset>.sha256`.
 
+Versioning notes
+- Updater compares numeric parts of versions, so `v2.1.9` is correctly newer than `v2.1.8.5`.
+- Trailing zero variants are normalized; `v2.1.9` and `v2.1.9.0` are treated as the same release line.
+- Canonical Windows asset names should stay in the form `ProjeTakip-vX.Y.Z-windows-x64.exe` and `ProjeTakip-vX.Y.Z-windows-x64.zip`.
+
 Security & practical notes
 - Always publish signed binaries/installers when possible. The app should download only from a trusted source. Use `GITHUB_TOKEN`
   as an environment variable for higher API rate limits or private repos (the updater respects `GITHUB_TOKEN`).

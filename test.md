@@ -1,7 +1,7 @@
 # Test Guide
 
-Bu repo için henüz güçlü bir otomatik test paketi yok.
-Bu yüzden doğrulama stratejisi katmanlı ilerlemelidir: en küçük uygun test, sonra smoke test, sonra gerekirse manuel akış kontrolü.
+Bu repo için artık anlamlı bir otomatik test paketi var, ancak GUI ve release davranışları için yine katmanlı doğrulama gerekir.
+Bu yüzden doğrulama stratejisi katmanlı ilerlemelidir: en küçük uygun test, sonra daha geniş pytest koşusu, sonra smoke test, sonra gerekirse manuel akış kontrolü.
 
 ## Default Testing Order
 
@@ -10,6 +10,7 @@ Bu yüzden doğrulama stratejisi katmanlı ilerlemelidir: en küçük uygun test
 3. Uygulama açılış smoke testi
 4. UI veya DB davranışı etkileniyorsa manuel akış testi
 5. Release veya updater etkileniyorsa build/doğrulama testi
+6. Metin veya i18n değiştiyse encoding hijyeni testi
 
 ## Quick Checks
 
@@ -33,7 +34,14 @@ python main.py
 pytest
 ```
 
-Not: `pytest` bağımlılığı listelenmiş olsa da repo içinde şu an anlamlı test dosyaları yok. Başarısızlık veya boş sonuç sürpriz değildir.
+Not: Repo içinde artık anlamlı test dosyaları vardır. Özellikle veritabanı, updater, log paneli, OCR ve metin/encoding hijyeni için pytest koşuları beklenen doğrulama adımıdır.
+
+### Encoding ve i18n hijyeni
+```powershell
+pytest tests/test_text_encoding_hygiene.py -q
+```
+
+Bu test, kaynak dosyalarda legacy mojibake dizilerinin tekrar sızmadığını ve kritik giriş ekranı metinlerinin gerçek Türkçe karakterlerle tutulduğunu doğrular.
 
 ## Change-Based Verification Matrix
 

@@ -181,11 +181,23 @@ def _resolve_variant_tokens(variant: str):
     return key, tokens
 
 
-def apply_stylesheet(app: QApplication, *, theme: str = "tok", variant: str = "light"):
+def apply_stylesheet(
+    app: QApplication,
+    *,
+    theme: str = "tok",
+    variant: str = "light",
+    performance_mode: bool = False,
+):
     """Apply a modern application stylesheet for the selected TOK variant."""
     try:
         font = QFont("Segoe UI", 10)
         app.setFont(font)
+
+        if performance_mode:
+            app.setStyle("Fusion")
+            app.setPalette(app.style().standardPalette())
+            app.setStyleSheet("")
+            return
 
         _, tokens = _resolve_variant_tokens(variant)
         css = """
@@ -234,6 +246,7 @@ def apply_stylesheet(app: QApplication, *, theme: str = "tok", variant: str = "l
 
         for key, value in tokens.items():
             css = css.replace(f"{{{key}}}", value)
+        app.setPalette(app.style().standardPalette())
         app.setStyleSheet(css)
     except Exception as e:
         print(f"Stylesheet uygulanamadi: {e}")
@@ -270,7 +283,14 @@ def set_tok_theme_variant(app: QApplication, window, variant: str) -> str:
     """Apply a specific TOK theme variant and store it on the window."""
     key = normalize_tok_variant(variant)
     try:
-        apply_stylesheet(app, theme="tok", variant=key)
+        apply_stylesheet(
+            app,
+            theme="tok",
+            variant=key,
+            performance_mode=bool(
+                getattr(window, "is_performance_mode_enabled", lambda: False)()
+            ),
+        )
         setattr(window, "_tok_variant", key)
     except Exception:
         pass

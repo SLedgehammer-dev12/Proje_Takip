@@ -7,5 +7,9 @@ reportlab
 psutil  # optional: memory monitoring (used by main_window._update_memory_label)
 
 # Optional / development (not required to run the app):
+# OCR fallback (optional):
+# pillow
+# pytesseract
+#
 # pytest
 # pytest-qt
