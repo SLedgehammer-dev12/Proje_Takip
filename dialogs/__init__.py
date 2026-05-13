@@ -22,6 +22,8 @@ from .misc_dialogs import (
     CokluProjeDialog,
     CokluAciklamaDialog,
 )
+from .yazi_ekler_dialog import YaziEklerDialog
+from .proje_sec_dialog import ProjeSecDialog
 from .login_dialog import LoginDialog
 from .export_dialog import ProjectExportDialog
 
@@ -36,6 +38,8 @@ __all__ = [
     "RevizyonSecDialog",
     "DurumDegistirDialog",
     "YaziTuruSecDialog",
+    "YaziEklerDialog",
+    "ProjeSecDialog",
     "CokluProjeDialog",
     "CokluAciklamaDialog",
     "LoginDialog",

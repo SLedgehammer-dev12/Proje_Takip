@@ -1,27 +1,24 @@
-# Proje Takip Sistemi v2.0.1
+# Proje Takip Sistemi v3.0.14
 
 Yerelde çalışan, PySide6 tabanlı proje ve revizyon takip uygulaması.
 
 ## Öne Çıkan Yenilikler
 
-### v2.0.1
-- Açılış veritabanı akışı hafifletildi
-- Ağır startup bakım adımları kaldırıldı
-- Açılış yedeği geri alındı
-- Login ekranı ana pencereden önce açılarak gereksiz yük azaltıldı
+### v3.0.14
+- Yazi Ekler is akisi yeniden tasarlandi (Gelen yazi -> yeni revizyon, Giden yazi -> durum guncelleme)
+- Dosyasiz proje/revizyon kaydi eklendi (`dosya_eksik` destegi)
+- Canli arama destekli `ProjeSecDialog` ile daha hizli proje secimi
+- OCR ve belge eslestirme mantigi gelistirildi
 
-### v2.0.0
-- GitHub Release tabanlı uygulama güncelleme kontrolü eklendi
-- Tekli dosya yüklemede proje kodu, adı, türü ve yazı bilgileri düzenlenebilir hale geldi
-- Proje türleri merkezileştirildi: `İnşaat`, `Mekanik`, `Piping`, `Elektrik`, `I&C`, `Siemens`, `Diğer`
-- Eski proje türleri veritabanında normalize ediliyor, tanımsız olanlar `Diğer`e alınıyor
-- RAM kullanım göstergesi gerçek proses belleğini gösteriyor
-- SQLite katmanı `WAL`, `busy_timeout`, `quick_check`, `optimize` ve kontrollü shutdown ile sağlamlaştırıldı
+### v3.0
+- Arayuz ve preview akislarindaki kilitlenmeler cozuldu
+- UTF-8 destegi tamamiyle aktif hale getirildi
+- Yeni login sistemi, cache performans iyilestirmeleri
 
 ### Önceki Sürümler
-- v1.5.1: Excel raporlama alanları ve lazy loading iyileştirmeleri
+- v2.1: Performans modu, dil destegi, GitHub updater optimizasyonu
+- v2.0: GitHub Release tabanlı uygulama güncelleme kontrolü
 - v1.5: Grafikler, dashboard ve raporlama iyileştirmeleri
-- v1.3: Kullanıcı girişi ve yetkilendirme
 
 ## Özellikler
 
@@ -180,5 +177,5 @@ Bu proje özel kullanım içindir.
 
 ## Sürüm
 
-- Son güncelleme: 17 Mart 2026
-- Versiyon: `v2.0.1`
+- Son güncelleme: 13 Mayıs 2026
+- Versiyon: `v3.0.14`

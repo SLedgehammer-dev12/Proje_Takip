@@ -13,20 +13,55 @@ class DocumentIntelligenceService:
     """Extract lightweight metadata from project and letter documents."""
 
     _PROJECT_FILENAME_PATTERN = re.compile(r"([0-4]-.+?-\d{4})_(.+)$", re.IGNORECASE)
+
+    # Legacy simple code pattern (fallback)
     _PROJECT_CODE_PATTERN = re.compile(
-        r"\b([0-4]-[A-Z0-9ÇĞİÖŞÜ]+(?:-[A-Z0-9ÇĞİÖŞÜ]+)*-\d{4})\b",
+        r"\b([0-4]-[A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc]+(?:-[A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc]+)*-\d{3,})\b",
+        re.IGNORECASE,
+    )
+
+    # ── Title-block field label patterns ──────────────────────────────────────
+    # Matches: "Dokuman No:", "Döküman No:", "Document No:", "Dok. No:", "Doc. No:"
+    _TB_DOKUMAN_NO = re.compile(
+        r"(?:d[oö]k[\u00fc]?man|document|dok|doc)[\.\s]*no[\s]*[:\-]?[\s]*(.+)",
+        re.IGNORECASE,
+    )
+    # Compound document-code pattern: digit(s)-LETTERS ... digit(s)-LETTERS-...
+    # Handles both space-separated compound codes AND single segment codes.
+    _TB_DOC_CODE = re.compile(
+        r"(\d[-\s][A-Z][A-Z0-9\-]+(?:\s+\d[-\s][A-Z][A-Z0-9\-]+)*)",
+        re.IGNORECASE,
+    )
+    # Revision table: "Rev A", "Revision: B", standalone "A" after rev header
+    _TB_REV = re.compile(
+        r"(?:rev(?:izyon)?[\s\.:\-]*|revision[\s\.:\-]*)([A-Z0-9]{1,3})",
+        re.IGNORECASE,
+    )
+    # Contract / yapim isi: any text ending with "yap\u0131m i\u015fi" or "yap\u0131m i\u015fleri"
+    _TB_YAPIM_ISI = re.compile(
+        r"(.{8,200}?\byap[\u0131i]m\s+i\u015f(?:i|leri)?)",
         re.IGNORECASE,
     )
     _LETTER_DATE_NO_PATTERNS = (
+        # Pattern 1: "DD.MM.YYYY ... 12345 sayılı" or "DD.MM.YYYY tarihli 12345"
         re.compile(
             r"(\d{2}\.\d{2}\.\d{4})\s*(?:tarih(?:li)?\s*(?:ve)?\s*)?([0-9]{1,12})\s*(?:sayılı|sayili|no'?lu|nolu)?",
             re.IGNORECASE,
         ),
+        # Pattern 2: Full "Sayı: CODE/NUMBER" — captures the full code then trailing digits
+        # E.g. "Sayı: B.19.5.BÜ.0.001/12345"  →  yazi_no=12345
+        re.compile(
+            r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc\.\-_/]+(?:[/\-][0-9]+)+)",
+            re.IGNORECASE,
+        ),
+        # Pattern 3: Sayı followed immediately by digits (legacy)
         re.compile(
             r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([0-9]{1,12}).{0,80}?(\d{2}\.\d{2}\.\d{4})",
             re.IGNORECASE | re.DOTALL,
         ),
     )
+    # Trailing-number extractor: from full sayı code take last /NUMBER or -NUMBER
+    _SAYI_TRAILING = re.compile(r"[/\-]([0-9]+)\s*$")
     _PROJECT_NAME_PATTERNS = (
         re.compile(
             r"(?:proje\s*adı|proje\s*adi|proje\s*ismi|işin\s*adı|isin\s*adi)\s*[:\-]\s*(.+)",
@@ -64,6 +99,8 @@ class DocumentIntelligenceService:
         result: Dict[str, Any] = {
             "kod": "",
             "isim": "",
+            "revizyon": "",
+            "yapim_isi": "",
             "source": "",
             "used_ocr": False,
             "source_note": "",
@@ -79,9 +116,7 @@ class DocumentIntelligenceService:
             result["source"] = "filename"
             result["source_note"] = "Proje bilgileri dosya adindan alindi."
 
-        if result["kod"] and result["isim"]:
-            return result
-
+        # Always scan document content for rich title-block fields
         extracted = self.extract_text(file_path, analysis_kind="project")
         text = extracted.get("text", "")
         if text:
@@ -90,6 +125,10 @@ class DocumentIntelligenceService:
                 result["kod"] = text_info["kod"]
             if text_info.get("isim") and not result["isim"]:
                 result["isim"] = text_info["isim"]
+            if text_info.get("revizyon") and not result["revizyon"]:
+                result["revizyon"] = text_info["revizyon"]
+            if text_info.get("yapim_isi") and not result["yapim_isi"]:
+                result["yapim_isi"] = text_info["yapim_isi"]
             if result["kod"] or result["isim"]:
                 result["source"] = extracted.get("source", "text")
                 result["used_ocr"] = bool(extracted.get("used_ocr"))
@@ -104,6 +143,8 @@ class DocumentIntelligenceService:
             "konu": "",
             "kurum": "",
             "aciklama": "",
+            "ekler": "",
+            "ilgi": "",
             "source": "",
             "used_ocr": False,
             "source_note": "",
@@ -120,8 +161,22 @@ class DocumentIntelligenceService:
 
         extracted = self.extract_text(file_path, analysis_kind="letter")
         text = extracted.get("text", "")
+        text_info = {}
         if text:
             text_info = self.parse_letter_text(text)
+            
+            # If text was from native PDF but failed to find yazi_no, force OCR
+            if not extracted.get("used_ocr") and not text_info.get("yazi_no"):
+                ocr_extracted = self.extract_text(file_path, analysis_kind="letter", force_ocr=True)
+                ocr_text = ocr_extracted.get("text", "")
+                if ocr_text:
+                    ocr_info = self.parse_letter_text(ocr_text)
+                    if ocr_info.get("yazi_no"):
+                        text_info = ocr_info
+                        extracted = ocr_extracted
+                        text = ocr_text
+
+        if text:
             if text_info.get("yazi_no") and not result["yazi_no"]:
                 result["yazi_no"] = text_info["yazi_no"]
             if text_info.get("yazi_tarih") and not result["yazi_tarih"]:
@@ -132,9 +187,15 @@ class DocumentIntelligenceService:
                 result["kurum"] = text_info["kurum"]
             if text_info.get("aciklama"):
                 result["aciklama"] = text_info["aciklama"]
+            if text_info.get("ekler"):
+                result["ekler"] = text_info["ekler"]
+            if "ekler_listesi" in text_info:
+                result["ekler_listesi"] = text_info["ekler_listesi"]
+            if text_info.get("ilgi"):
+                result["ilgi"] = text_info["ilgi"]
             if any(
                 result.get(key)
-                for key in ("yazi_no", "yazi_tarih", "konu", "kurum", "aciklama")
+                for key in ("yazi_no", "yazi_tarih", "konu", "kurum", "aciklama", "ekler", "ilgi")
             ):
                 result["source"] = extracted.get("source", "text")
                 result["used_ocr"] = bool(extracted.get("used_ocr"))
@@ -143,49 +204,280 @@ class DocumentIntelligenceService:
         return result
 
     def parse_project_text(self, text: str) -> Dict[str, str]:
+        """
+        Smart title-block parser for engineering drawings.
+
+        Typical pafta (drawing sheet) title block (bottom-right corner)::
+
+            ┌──────────────────────────────────────────────┐
+            │  BOUNDARY FENCE LAYOUT PLAN & GATE HOUSE DOOR │  ← document name
+            ├───────────────────┬──────────────────────────┤
+            │  Dok\u00fcman No:       │  0-NGTL 0-CS-C-001-1033  │  ← compound code
+            ├───────────────────┼──────────────────────────┤
+            │  Rev              │  A                        │  ← revision
+            ├───────────────────┼──────────────────────────┤
+            │  ... Yap\u0131m \u0130\u015fi      │                          │  ← contract name
+            └──────────────────────────────────────────────┘
+
+        Returns dict with keys: kod, isim, revizyon, yapim_isi
+        """
         normalized = self._normalize_text(text)
-        code_match = self._PROJECT_CODE_PATTERN.search(normalized)
-        project_code = code_match.group(1).strip() if code_match else ""
-        project_name = self._extract_project_name(normalized, project_code)
-        return {"kod": project_code, "isim": project_name}
+        tb = self._parse_titleblock(normalized)
+
+        # If title-block extraction failed, fall back to legacy regex
+        if not tb.get("kod"):
+            code_match = self._PROJECT_CODE_PATTERN.search(normalized)
+            if code_match:
+                tb["kod"] = code_match.group(1).strip()
+        if not tb.get("isim"):
+            tb["isim"] = self._extract_project_name(normalized, tb.get("kod", ""))
+
+        return tb
+
+    # ── Title-block parsing ──────────────────────────────────────────────────
+
+    def _parse_titleblock(self, text: str) -> Dict[str, str]:
+        """Extract all title-block fields from normalized drawing text."""
+        lines = [ln.strip() for ln in text.splitlines()]
+        non_empty = [ln for ln in lines if ln]
+
+        kod = self._tb_extract_document_code(non_empty)
+        isim = self._tb_extract_document_name(non_empty, kod)
+        revizyon = self._tb_extract_revision(non_empty)
+        yapim_isi = self._tb_extract_yapim_isi(non_empty)
+
+        return {
+            "kod": kod,
+            "isim": isim,
+            "revizyon": revizyon,
+            "yapim_isi": yapim_isi,
+        }
+
+    def _tb_extract_document_code(self, lines: list) -> str:
+        """
+        Look for a 'Dok\u00fcman No:' label line and extract the code value that follows
+        on the same line or the very next non-empty line.
+        Handles compound codes like '0-NGTL 0-CS-C-001-1033'.
+        """
+        for idx, line in enumerate(lines):
+            m = self._TB_DOKUMAN_NO.search(line)
+            if m:
+                candidate = m.group(1).strip()
+                # If the value is on the same line after the label
+                if candidate:
+                    code = self._clean_doc_code(candidate)
+                    if code:
+                        return code
+                # Otherwise look at the next line
+                if idx + 1 < len(lines):
+                    code = self._clean_doc_code(lines[idx + 1])
+                    if code:
+                        return code
+
+        # Fallback: scan all lines for a code-shaped token
+        for line in lines:
+            cm = self._TB_DOC_CODE.search(line)
+            if cm:
+                code = self._clean_doc_code(cm.group(1))
+                if code and len(code) >= 6:
+                    return code
+        return ""
+
+    def _clean_doc_code(self, raw: str) -> str:
+        """Normalise a raw document code candidate."""
+        cleaned = raw.strip().upper()
+        # Remove surrounding punctuation except hyphens and spaces
+        cleaned = re.sub(r"^[^A-Z0-9]+", "", cleaned)
+        cleaned = re.sub(r"[^A-Z0-9\- ]+$", "", cleaned)
+        # A valid code must start with a digit and a hyphen
+        if not re.match(r"\d[-\s]", cleaned):
+            return ""
+        # Must have at least one letter segment
+        if not re.search(r"[A-Z]{2,}", cleaned):
+            return ""
+        return cleaned[:80]
+
+    def _tb_extract_document_name(self, lines: list, code: str) -> str:
+        """
+        The document name sits ABOVE the 'Dok\u00fcman No' row.
+        It is usually ALL-CAPS (or Title-Case), longer than 6 chars,
+        and appears on the line immediately before the label.
+
+        Strategy:
+        1. Find the Dok\u00fcman No label line index.
+        2. Walk upwards for the first line that looks like a title.
+        3. If not found that way, look for an ALL-CAPS line with 3+ words.
+        """
+        dokno_idx = None
+        for idx, line in enumerate(lines):
+            if self._TB_DOKUMAN_NO.search(line):
+                dokno_idx = idx
+                break
+
+        if dokno_idx is not None:
+            # Search upward (up to 5 lines) and collect contiguous title lines
+            title_parts = []
+            for offset in range(1, min(6, dokno_idx + 1)):
+                candidate = lines[dokno_idx - offset]
+                if self._looks_like_document_title(candidate):
+                    title_parts.append(candidate)
+                elif title_parts:
+                    # Found the top of the contiguous title block
+                    break
+            
+            if title_parts:
+                title_parts.reverse()
+                combined = " ".join(title_parts)
+                return self._clean_project_name(combined)
+
+        # Fallback: first ALL-CAPS line with 3+ words and length >= 10
+        for line in lines:
+            if self._looks_like_document_title(line) and len(line.split()) >= 3:
+                return self._clean_project_name(line)
+
+        return ""
+
+    def _looks_like_document_title(self, line: str) -> bool:
+        """Heuristic: does this line look like a document title?"""
+        s = line.strip()
+        if len(s) < 6:
+            return False
+        # Reject pure numbers / dates / short codes
+        if re.fullmatch(r"[0-9\s\./:,\-]+", s):
+            return False
+        # Reject single-word lines that look like labels
+        words = s.split()
+        if len(words) < 2:
+            return False
+            
+        # Reject lines that are entirely common title-block labels
+        common_labels = {"yapan", "kontrol", "onay", "tarih", "ölçek", "scale", "drawn", "checked", "approved", "designed", "rev", "revision", "imza", "signature", "checkedby", "designedby", "approvedby"}
+        cleaned_words = [re.sub(r"[^a-zöçşığü]", "", w.lower()) for w in words]
+        if all(cw in common_labels or not cw for cw in cleaned_words):
+            return False
+
+        # Should be mostly alphabetic (with common punctuation)
+        alpha = sum(c.isalpha() for c in s)
+        if alpha / max(len(s), 1) < 0.40:
+            return False
+        # Prefer ALL-CAPS or Title-Case (not mixed lowercase prose)
+        upper_words = sum(1 for w in words if w.isupper() or (len(w) > 1 and w[0].isupper()))
+        return upper_words >= max(1, len(words) // 2)
+
+    def _tb_extract_revision(self, lines: list) -> str:
+        """
+        Find the revision code from the title-block revision table.
+        Looks for a 'Rev' label followed by a 1-3 char alphanumeric value.
+        Returns the most recent / highest revision found.
+        """
+        candidates = []
+        for idx, line in enumerate(lines):
+            m = self._TB_REV.search(line)
+            if m:
+                rev = m.group(1).strip().upper()
+                if len(rev) <= 3 and rev not in ("NO", "ISI", "THE", "FOR", "REV"):
+                    candidates.append(rev)
+                    # Also check the next line if the value is on a separate cell
+                    if idx + 1 < len(lines):
+                        next_line = lines[idx + 1].strip()
+                        if re.fullmatch(r"[A-Z0-9]{1,3}", next_line):
+                            candidates.append(next_line)
+        if not candidates:
+            return ""
+        # Return the latest revision (simple lexicographic sort gives A < B < ... < Z < 0 < 1...)
+        return sorted(set(candidates))[-1]
+
+    def _tb_extract_yapim_isi(self, lines: list) -> str:
+        """Extract the construction contract name ending with 'yap\u0131m i\u015fi / yap\u0131m i\u015fleri'."""
+        # Try full-line match first
+        for line in lines:
+            m = self._TB_YAPIM_ISI.search(line)
+            if m:
+                return self._clean_text_field(m.group(1), limit=240)
+        # Try across joined consecutive lines (label might be on one line, value on next)
+        for idx in range(len(lines) - 1):
+            combined = lines[idx] + " " + lines[idx + 1]
+            m = self._TB_YAPIM_ISI.search(combined)
+            if m:
+                return self._clean_text_field(m.group(1), limit=240)
+        return ""
 
     def parse_letter_text(self, text: str) -> Dict[str, str]:
         normalized = self._normalize_text(text)
         yazi_no = ""
         yazi_tarih = ""
+
         for pattern in self._LETTER_DATE_NO_PATTERNS:
             match = pattern.search(normalized)
             if not match:
                 continue
             if pattern is self._LETTER_DATE_NO_PATTERNS[0]:
+                # Pattern 1: date + trailing number
                 yazi_tarih, yazi_no = match.group(1), match.group(2)
+            elif pattern is self._LETTER_DATE_NO_PATTERNS[1]:
+                # Pattern 2: full Sayı code
+                full_code = match.group(1).strip()
+                yazi_no = full_code
+                date_m = re.search(r"(\d{2}\.\d{2}\.\d{4})", normalized[:600])
+                yazi_tarih = date_m.group(1) if date_m else ""
             else:
+                # Pattern 3: legacy digits-first
                 yazi_no, yazi_tarih = match.group(1), match.group(2)
             break
+
+        if not yazi_no:
+            # Fallback: Just look for Sayı/Evrak no
+            sayi_m = re.search(
+                r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc\.\-_/]+(?:[/\-][0-9]+)+|[0-9]{2,12})",
+                normalized,
+                re.IGNORECASE
+            )
+            if sayi_m:
+                full_code = sayi_m.group(1).strip()
+                yazi_no = full_code
+                
+        if not yazi_tarih:
+            # Fallback: Just look for a date near the top
+            date_m = re.search(r"(\d{2}\.\d{2}\.\d{4})", normalized[:1000])
+            if date_m:
+                yazi_tarih = date_m.group(1)
 
         konu = self._extract_letter_subject(normalized)
         kurum = self._extract_letter_institution(normalized, konu)
         aciklama = self._build_letter_description(normalized, konu, kurum)
+        ekler_listesi = self._extract_letter_attachments_structured(normalized)
+        ilgi = self._extract_letter_references(normalized)
+
+        # Backward-compat string (pipe-joined raw text)
+        ekler_str = " | ".join(
+            e.get("ham_metin", "") for e in ekler_listesi if e.get("ham_metin")
+        )
+
         return {
             "yazi_no": (yazi_no or "").strip(),
             "yazi_tarih": (yazi_tarih or "").strip(),
             "konu": konu,
             "kurum": kurum,
             "aciklama": aciklama,
+            "ekler": ekler_str,
+            "ekler_listesi": ekler_listesi,
+            "ilgi": ilgi,
         }
 
-    def extract_text(
-        self,
-        file_path: str,
-        max_pages: int = 3,
-        analysis_kind: str = "generic",
-    ) -> Dict[str, Any]:
+
+    def extract_text(self, file_path: str, max_pages: int = 3, analysis_kind: str = "generic", force_ocr: bool = False) -> Dict[str, Any]:
+        """
+        Extracts text from a file (PDF or Image).
+        Returns:
+            Dict: {"text": "...", "source": "pdf_text"|"pdf_tesseract"|"image_ocr", "used_ocr": bool}
+        """
         extension = os.path.splitext(file_path)[1].lower()
         if extension == ".pdf":
             return self._extract_text_from_pdf(
                 file_path,
                 max_pages=max_pages,
                 analysis_kind=analysis_kind,
+                force_ocr=force_ocr,
             )
         if extension in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}:
             return self._extract_text_from_image(file_path, analysis_kind=analysis_kind)
@@ -213,6 +505,7 @@ class DocumentIntelligenceService:
         file_path: str,
         max_pages: int = 3,
         analysis_kind: str = "generic",
+        force_ocr: bool = False,
     ) -> Dict[str, Any]:
         fitz = self._load_fitz()
         if fitz is None:
@@ -226,14 +519,19 @@ class DocumentIntelligenceService:
 
         try:
             chunks = []
-            for page_index in range(min(max_pages, doc.page_count)):
-                page = doc.load_page(page_index)
-                page_text = self._extract_pdf_page_text(page, analysis_kind=analysis_kind)
-                if page_text.strip():
-                    chunks.append(page_text)
-            combined = "\n".join(chunks).strip()
-            if combined:
-                return {"text": combined, "source": "pdf_text", "used_ocr": False}
+            if not force_ocr:
+                for page_index in range(min(max_pages, doc.page_count)):
+                    page = doc.load_page(page_index)
+                    page_text = self._extract_pdf_page_text(page, analysis_kind=analysis_kind)
+                    if page_text.strip():
+                        chunks.append(page_text)
+                combined = "\n".join(chunks).strip()
+                
+                # Taranmış PDF'lerde fitz get_text() boş veya çok az çöp karakter döndürebilir.
+                # Metnin gerçekten dijital olduğunu doğrulamak için yeterince harf/rakam içerdiğine bakıyoruz.
+                alphanumeric_count = sum(c.isalnum() for c in combined)
+                if alphanumeric_count >= 15:
+                    return {"text": combined, "source": "pdf_text", "used_ocr": False}
 
             tesseract_chunks = []
             for page_index in range(min(max_pages, doc.page_count)):
@@ -467,6 +765,152 @@ class DocumentIntelligenceService:
                     return cleaned
         return ""
 
+    # ── Structured attachment extraction ─────────────────────────────────────
+    # Regex to strip leading ek-number prefix: "1-", "1)", "1.", "Ek 2:", etc.
+    _EK_PREFIX = re.compile(
+        r"^(?:ek(?:\s*[-.:])\s*\d+\s*[:.-]?\s*|\d+\s*[)./-]\s*|[a-z][).:]\s*)",
+        re.IGNORECASE,
+    )
+    # Revision at end of ek line: "Rev A", "Rev.B", "R-C"
+    _EK_REV = re.compile(r"\brev(?:izyon)?[\s.:\-]*([A-Z0-9]{1,3})\s*$", re.IGNORECASE)
+    # Document-code token anywhere in ek line (compound space-separated codes supported)
+    _EK_CODE = re.compile(
+        r"(\d[-][A-Z][A-Z0-9\-]+(?:\s+\d[-][A-Z][A-Z0-9\-]+)*|\d[-][A-Z0-9\-]{3,})",
+        re.IGNORECASE,
+    )
+
+    def _extract_letter_attachments_structured(self, text: str) -> list:
+        """
+        Parse the Ek / Ekler section of a letter into a structured list.
+
+        Each entry is a dict::
+
+            {
+                "sira":     int,   # 1-based attachment order
+                "ham_metin": str,  # raw text after stripping ek prefix
+                "kod":      str,   # document code if found
+                "ad":       str,   # document name (text minus code/rev)
+                "revizyon": str,   # revision code if found
+            }
+
+        Attachment numbers (1-, 2), Ek-1:, etc.) are discarded per requirements.
+        """
+        lines = text.splitlines()
+        raw_ekler: list = []
+        in_ekler = False
+
+        for line in lines:
+            ls = line.strip()
+            if not ls:
+                continue
+            lower = ls.casefold()
+
+            # Detect section header
+            if re.match(r"^ek(?:ler)?\s*[:;]", lower):
+                in_ekler = True
+                # Content after the colon on the same line
+                after = ls.split(":", 1)[1].strip() if ":" in ls else ""
+                if after:
+                    raw_ekler.append(after)
+                continue
+
+            if in_ekler:
+                # Stop section on known other headers
+                if re.match(
+                    r"^(?:ilgi|referans|da\u011f\u0131t\u0131m|dagitim|konu|say\u0131|sayi|imza)\s*[:;]",
+                    lower,
+                ):
+                    break
+                # Over-indented (signature block) — stop
+                if len(line) - len(line.lstrip()) > 20:
+                    break
+                if len(ls) >= 3:
+                    raw_ekler.append(ls)
+
+        # Parse each raw line
+        result = []
+        sira = 0
+        for raw in raw_ekler:
+            # Strip leading ek-number prefix
+            cleaned = self._EK_PREFIX.sub("", raw).strip()
+            if not cleaned or len(cleaned) < 3:
+                continue
+            sira += 1
+
+            # Extract document code
+            kod = ""
+            kod_m = self._EK_CODE.search(cleaned)
+            rev = ""
+            
+            if kod_m:
+                kod = kod_m.group(1).strip().upper()
+                after_code = cleaned[kod_m.end():]
+                # Look for a standalone 1-3 char token that might be revision (e.g. " - P0 - ")
+                rev_m = re.search(r"(?:[-_/\s]|^)(?:rev(?:izyon)?[\s.:\-]*|)([A-Z0-9]{1,3})(?:[-_/\s]|$)", after_code, re.IGNORECASE)
+                if rev_m:
+                    rev = rev_m.group(1).upper()
+                    # Remove the revision part from the name
+                    ad_after = after_code[:rev_m.start()] + after_code[rev_m.end():]
+                    ad = (cleaned[:kod_m.start()] + ad_after).strip()
+                else:
+                    ad = (cleaned[:kod_m.start()] + after_code).strip()
+            else:
+                ad = cleaned
+                # Fallback to ending revision
+                rev_m = self._EK_REV.search(ad)
+                if rev_m:
+                    rev = rev_m.group(1).upper()
+                    ad = ad[:rev_m.start()].strip()
+
+            # Clean up name
+            ad = re.sub(r"[\-_]+$", "", ad).strip()
+            ad = re.sub(r"^[\s\-_]+", "", ad).strip()
+            # If name is completely wrapped in parentheses, remove them
+            if ad.startswith("(") and ad.endswith(")"):
+                ad = ad[1:-1].strip()
+
+            result.append({
+                "sira": sira,
+                "ham_metin": raw,
+                "kod": kod,
+                "ad": ad,
+                "revizyon": rev,
+            })
+
+        return result
+
+    def _extract_letter_attachments(self, text: str) -> str:
+        """Backward-compat string form (pipe-joined ham_metin)."""
+        structured = self._extract_letter_attachments_structured(text)
+        return " | ".join(e["ham_metin"] for e in structured)
+
+    def _extract_letter_references(self, text: str) -> str:
+        lines = text.splitlines()
+        ilgi = []
+        in_ilgi = False
+        for line in lines:
+            line_strip = line.strip()
+            if not line_strip:
+                continue
+            lower_line = line_strip.casefold()
+            if lower_line.startswith("ilgi:") or lower_line.startswith("referans:"):
+                in_ilgi = True
+                content = line_strip.split(":", 1)[1].strip()
+                if content:
+                    ilgi.append(content)
+                continue
+            
+            if in_ilgi:
+                if lower_line.startswith(("ek:", "ekler:", "dağıtım:", "dagitim:", "konu:", "sayı:", "sayi:")):
+                    break
+                if len(line) - len(line.lstrip()) > 20:
+                    break
+                if len(line_strip) < 3:
+                    continue
+                ilgi.append(line_strip)
+                
+        return self._clean_text_field(" | ".join(ilgi), limit=1000)
+
     def _extract_letter_institution(self, text: str, konu: str) -> str:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         for pattern in self._LETTER_INSTITUTION_PATTERNS:
@@ -591,6 +1035,7 @@ class DocumentIntelligenceService:
     def _clean_project_name(self, value: Optional[str]) -> str:
         cleaned = (value or "").replace("_", " ").strip()
         cleaned = re.split(r"[|;]", cleaned, maxsplit=1)[0].strip()
+        cleaned = re.sub(r"^(?:Proje\s*(?:Adı|Adi|İsmi|Ismi|Ad|İsim)\s*[:\-]*\s*)", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s+", " ", cleaned)
         return cleaned[:160]
 

@@ -76,10 +76,8 @@ release/*/*.msi
 release/*/SHA256SUMS
 ProjeTakip-v*.spec
 
-# Tests (don't push test code)
-tests/
-test_*.py
-tools/test_*.py
+# Tests (We DO track tests in version control)
+# (removed test ignores)
 
 # OS
 Thumbs.db

@@ -1,5 +1,19 @@
-﻿PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
+PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.0.14 ---
+  * İŞ AKIŞI: Gelen yazı işlemi yeni bir revizyon açarken, giden yazı işlemi artık sadece mevcut son revizyonun durumunu güncelliyor.
+  * EŞLEŞTİRME: Canlı arama destekli ProjeSecDialog eklendi. Tüm benzer projeler listelenerek doğru projenin seçilmesi sağlandı.
+  * DOĞRULAMA: Seçilen dosya ile projenin kod eşleşmesi yapılmakta, uyuşmazlıklarda uyarı mekanizması çalışmaktadır.
+  * OCR: "Proje Adı:" etiketleri temizlendi, belge analiz stabilitesi artırıldı.
+  * DOSYA: Henüz dosyası ulaşmamış revizyonlar için "dosya_eksik" bayrağı ile kayıt imkanı eklendi.
+--- Sürüm: v3.0.3 ---
+  * AKILLI YAZI ANALİZİ: Resmi yazılar yüklenirken yazı içindeki "Ek:" ve "İlgi:" bölümleri otomatik taranıyor.
+  * EK YÖNETİMİ: Yazı ekleri, veritabanındaki mevcut projelerle otomatik eşleştiriliyor (benzerlik skoruna göre).
+  * YAZI EKLERİ DIALOGU: Yeni "Yazı Ekleri Yönetimi" ekranı ile her ek için mevcut projeyle eşleştirme veya yeni proje oluşturma imkanı eklendi.
+  * CROSS-REFERENCE: "İlgi:" bölümü ile eski yazılar arası referans zinciri görüntülenebiliyor.
+  * İÇERİK TARAMA: Yazı adında tarih/sayı bulunamazsa, belge içeriği OCR/metin okuma ile otomatik taranıyor.
+  * EK UYARI: Kullanıcıya yazının kaç ek içerdiği, eşleşme bulunamayan ekler varsa özel uyarı gösteriliyor.
+  * DAĞITIM: Toplu Gelen/Onay/Notlu Onay/Red yazısı işlemleri tamamlandıktan sonra ek yönetimi otomatik devreye giriyor.
 --- Sürüm: v3.0.2 ---
   * EXCEL: Backup klasoru altindan acilan veritabani baglaminda proje_listesi.xlsx ust dizin fallback'i ile bulunuyor; yanlis klasor uyarilari azaltildi.
   * LOG: Excel dosyasi eksikse sonuc artik cache'leniyor; ayni eksik dosya icin tekrar tekrar warning basilmiyor.

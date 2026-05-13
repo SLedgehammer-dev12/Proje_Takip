@@ -1,4 +1,4 @@
-﻿# main_window.py
+# main_window.py
 import sys
 import os
 import logging
@@ -84,6 +84,8 @@ from dialogs import (
     RevizyonSecDialog,  # noqa: F401 (imported for tests and for backwards compatibility)
     YaziTuruSecDialog,  # noqa: F401 (imported for tests and for backwards compatibility)
     DosyadanCokluProjeDialog,
+    YaziEklerDialog,
+    ProjeSecDialog,
 )
 from filters import AdvancedFilterManager
 from AdvancedFilterDialog import AdvancedFilterDialog
@@ -1161,6 +1163,71 @@ class AnaPencere(QMainWindow):
                     return memory_kb / 1024 / 1024
 
                 probe = _resource_probe
+            except Exception:
+                probe = None
+
+        if probe is None and sys.platform == "win32":
+            try:
+                import ctypes
+                import os
+                import subprocess
+                from ctypes import wintypes
+                
+                PROCESS_QUERY_INFORMATION = 0x0400
+                PROCESS_VM_READ = 0x0010
+                
+                OpenProcess = ctypes.windll.kernel32.OpenProcess
+                CloseHandle = ctypes.windll.kernel32.CloseHandle
+                
+                class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                    _fields_ = [
+                        ('cb', wintypes.DWORD),
+                        ('PageFaultCount', wintypes.DWORD),
+                        ('PeakWorkingSetSize', ctypes.c_size_t),
+                        ('WorkingSetSize', ctypes.c_size_t),
+                        ('QuotaPeakPagedPoolUsage', ctypes.c_size_t),
+                        ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                        ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t),
+                        ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                        ('PagefileUsage', ctypes.c_size_t),
+                        ('PeakPagefileUsage', ctypes.c_size_t),
+                    ]
+                
+                try:
+                    GetProcessMemoryInfo = ctypes.windll.kernel32.K32GetProcessMemoryInfo
+                except AttributeError:
+                    GetProcessMemoryInfo = ctypes.WinDLL('psapi.dll').GetProcessMemoryInfo
+                GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS), wintypes.DWORD]
+                GetProcessMemoryInfo.restype = wintypes.BOOL
+                
+                def _win32_probe():
+                    try:
+                        pid = os.getpid()
+                        h_process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+                        if h_process:
+                            counters = PROCESS_MEMORY_COUNTERS()
+                            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+                            if GetProcessMemoryInfo(h_process, ctypes.byref(counters), counters.cb):
+                                result = counters.WorkingSetSize / 1024 / 1024
+                                CloseHandle(h_process)
+                                return result
+                            CloseHandle(h_process)
+                        
+                        # Fallback to tasklist if ctypes fails
+                        CREATE_NO_WINDOW = 0x08000000
+                        output = subprocess.check_output(
+                            ['tasklist', '/FI', f'PID eq {pid}', '/FO', 'CSV', '/NH'], 
+                            creationflags=CREATE_NO_WINDOW
+                        ).decode('utf-8', errors='ignore')
+                        parts = output.strip().split('","')
+                        if len(parts) >= 5:
+                            mem_str = parts[-1].replace(' K"', '').replace(',', '').replace('.', '').strip()
+                            return float(mem_str) / 1024
+                        return None
+                    except Exception:
+                        return None
+                    
+                probe = _win32_probe
             except Exception:
                 probe = None
 
@@ -4971,16 +5038,14 @@ class AnaPencere(QMainWindow):
         )
         if not dosyalar:
             return
-        eklenen_projeler = []
-        hatali_dosyalar = []
-
         files_info = []
         intelligence_service = self.document_intelligence_service
         for dosya_yolu in dosyalar:
             dosya_adi = os.path.basename(dosya_yolu)
             bilgi = dosyadan_proje_bilgisi_cikar(dosya_adi) or {}
-            yazi_bilgisi = {}
             warning_parts = []
+            revizyon = ""
+            yapim_isi = ""
             if intelligence_service is not None:
                 try:
                     belge_bilgisi = intelligence_service.analyze_project_document(dosya_yolu)
@@ -4992,8 +5057,14 @@ class AnaPencere(QMainWindow):
                     bilgi["kod"] = belge_bilgisi["kod"]
                 if belge_bilgisi.get("isim") and not bilgi.get("isim"):
                     bilgi["isim"] = belge_bilgisi["isim"]
+                if belge_bilgisi.get("revizyon"):
+                    revizyon = belge_bilgisi["revizyon"]
+                if belge_bilgisi.get("yapim_isi"):
+                    yapim_isi = belge_bilgisi["yapim_isi"]
+                    warning_parts.append(f"🏗️ {yapim_isi}")
                 if belge_bilgisi.get("source_note"):
                     warning_parts.append(belge_bilgisi["source_note"])
+
             files_info.append(
                 {
                     "dosya_adi": dosya_adi,
@@ -5005,18 +5076,22 @@ class AnaPencere(QMainWindow):
                     "gelen_yazi_no": bilgi.get("gelen_yazi_no", ""),
                     "gelen_yazi_tarih": bilgi.get("gelen_yazi_tarih", ""),
                     "mevcut": bool(self.db.proje_var_mi(bilgi.get("kod", ""))),
-                    "yeni_revizyon_kodu": "",
+                    "yeni_revizyon_kodu": revizyon,
+                    "yapim_isi": yapim_isi,
                     "uyari": " | ".join(
                         [part for part in warning_parts if part]
                     ),
                 }
             )
 
+
         bulk_dialog = DosyadanCokluProjeDialog(self, self.db, files_info)
         if not bulk_dialog.exec():
             return
 
         results = bulk_dialog.get_results()
+        eklenen_projeler = []
+        hatali_dosyalar = []
         for info, res in zip(files_info, results):
             if not res.get("ekle"):
                 continue
@@ -5686,6 +5761,19 @@ class AnaPencere(QMainWindow):
             bilgiler = dosyadan_tarih_sayi_cikar(dosya_adi)
             if not bilgiler:
                 bilgiler = {}
+
+            # İçeriği tarayarak eksik bilgileri tamamla
+            letter_bilgisi = {}
+            if self.document_intelligence_service is not None:
+                try:
+                    letter_bilgisi = self.document_intelligence_service.analyze_letter_document(dosya_yolu)
+                    if not bilgiler.get("sayi") and letter_bilgisi.get("yazi_no"):
+                        bilgiler["sayi"] = letter_bilgisi["yazi_no"]
+                    if not bilgiler.get("tarih") and letter_bilgisi.get("yazi_tarih"):
+                        bilgiler["tarih"] = letter_bilgisi["yazi_tarih"]
+                except Exception as e:
+                    self.logger.debug("Toplu yazı analizi başarısız (%s): %s", dosya_yolu, e)
+
             yazi_no = bilgiler.get("sayi", "")
             tarih = bilgiler.get("tarih", datetime.datetime.now().strftime("%d.%m.%Y"))
 
@@ -5693,7 +5781,7 @@ class AnaPencere(QMainWindow):
             dialog = OnayRedDialog(
                 self,
                 islem_turu.capitalize(),
-                title=f"Toplu {islem_turu.capitalize()} Yazı İşlemi",
+                title=f"{islem_turu.capitalize()} Yazı İşlemi",
             )
             dialog.yazi_no_combo.setEditText(yazi_no)
             dialog.tarih_entry.setText(tarih)
@@ -5763,46 +5851,187 @@ class AnaPencere(QMainWindow):
 
             # db_yazi_turu already set above; nothing to do here
 
-            # 5b. Prepare selected projects mapping and selected codes
-            selected_projects = self._get_selected_projects()
-            if not selected_projects:
-                QMessageBox.warning(self, "Uyarı", "Lütfen işlem için en az bir proje seçin.")
-                return
-            projeler_dict = self._prepare_projeler_dict_for_action(selected_projects, db_action)
-            secilen_kodlar = list(projeler_dict.keys())
+            # 5b. İşlemi kendi başına başlat (Seçili projeleri etkilemeden)
+            secilen_kodlar = []
 
-            # 6. İşlemi uygula
-            basarili_sayisi = 0
-            for kod in secilen_kodlar:
-                pid = projeler_dict[kod]["id"]
-                sonuc = "Hata"
-
-                if db_yazi_turu == "gelen":
-                    if self.db.son_revizyona_gelen_yazi_ekle(pid, yazi_no, tarih):
-                        sonuc = "Basarili"
-                elif db_yazi_turu == "onay":
-                    sonuc = self.db.son_revizyonu_onayla(pid, yazi_no, tarih)
-                elif db_yazi_turu == "notlu_onay":
-                    sonuc = self.db.son_revizyonu_notlu_onayla(pid, yazi_no, tarih)
-                elif db_yazi_turu == "red":
-                    sonuc = self.db.son_revizyonu_reddet(pid, yazi_no, tarih)
-
-                if sonuc == "Basarili":
-                    basarili_sayisi += 1
+            # 8. Yazının ekleri varsa YaziEklerDialog'u göster
+            try:
+                ekler_raw = letter_bilgisi.get("ekler", "")
+                ilgi_raw = letter_bilgisi.get("ilgi", "")
+                if ekler_raw and ekler_raw.strip():
+                    cevap = QMessageBox.question(
+                        self,
+                        "Yazı Ekleri Tespit Edildi",
+                        f"Bu yazıda ek(ler) bulundu:\n\n{ekler_raw[:300]}\n\n"
+                        "Ekleri proje veritabanıyla ilişkilendirmek ister misiniz?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes,
+                    )
+                    if cevap == QMessageBox.Yes:
+                        self._yazi_eklerini_isle(yazi_no, tarih, ekler_raw, ilgi_raw, letter_bilgisi.get("ekler_listesi", []), db_yazi_turu=db_yazi_turu)
                 else:
-                    self.logger.error(f"Toplu işlem hatası ({kod}): {sonuc}")
-
-            # 7. Sonuç bildir - clear cache and reload projects
-            self._invalidate_filter_cache_and_reload()
-            QMessageBox.information(
-                self,
-                "İşlem Tamamlandı",
-                f"{len(secilen_kodlar)} projeden {basarili_sayisi} tanesi başarıyla güncellendi.",
-            )
+                    cevap = QMessageBox.question(
+                        self,
+                        "Yazı Ekleri",
+                        "Bu yazıda otomatik ek tespit edilemedi.\nManuel olarak ek dosyası yüklemek veya mevcut projelerle ilişkilendirmek ister misiniz?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if cevap == QMessageBox.Yes:
+                        self._yazi_eklerini_isle(yazi_no, tarih, "", ilgi_raw, [], db_yazi_turu=db_yazi_turu)
+            except Exception as e:
+                self.logger.debug("Yazı ek analizi gösterilemedi: %s", e)
 
         except Exception as e:
             self.logger.error(f"Toplu yazı işlemi hatası: {e}", exc_info=True)
             QMessageBox.critical(self, "Hata", f"İşlem sırasında hata oluştu: {e}")
+
+    def _yazi_eklerini_isle(self, yazi_no: str, yazi_tarih: str, ekler_raw: str, ilgi_raw: str = "", ekler_listesi: list = None, db_yazi_turu: str = "gelen"):
+        """
+        YaziEklerDialog'u açar ve kullanıcının seçimlerine göre işlem yapar.
+
+        İş Akışı Kuralları:
+        - GELEN YAZI → Mevcut proje için bir sonraki revizyon kodu ile YENİ REVİZYON açar
+        - GİDEN YAZI → Yeni revizyon açmaz, mevcut son revizyonun DURUMUNU günceller (onay/red)
+        - Dosya seçilmezse → Revizyon kaydedilir ama dosya_eksik olarak işaretlenir
+        """
+        try:
+            islem_turu_dialog = "giden" if db_yazi_turu in ["onay", "notlu_onay", "red"] else "gelen"
+
+            dialog = YaziEklerDialog(
+                self,
+                db=self.db,
+                yazi_no=yazi_no,
+                yazi_tarih=yazi_tarih,
+                ekler_raw=ekler_raw,
+                ilgi_raw=ilgi_raw,
+                intelligence_service=self.document_intelligence_service,
+                ekler_listesi=ekler_listesi,
+                islem_turu=islem_turu_dialog,
+            )
+            if not dialog.exec():
+                return
+
+            results = dialog.get_results()
+            eklenen = []
+            hatalar = []
+
+            for item in results:
+                try:
+                    if item["islem"] == "atla" or not item.get("ek_metin"):
+                        continue
+
+                    if item["islem"] == "eslesme" and item.get("proje_id"):
+                        pid = item["proje_id"]
+                        dosya_yolu = item.get("dosya_yolu")
+                        dosya_verisi = None
+
+                        if dosya_yolu:
+                            with open(dosya_yolu, "rb") as f:
+                                dosya_verisi = f.read()
+
+                        if db_yazi_turu == "gelen":
+                            # GELEN YAZI → YENİ REVİZYON aç
+                            self.db.mevcut_projeye_revizyon_ekle(
+                                proje_id=pid,
+                                revizyon_kodu=item["revizyon"],
+                                dosya_yolu=dosya_yolu,
+                                dosya_verisi=dosya_verisi,
+                                gelen_yazi_no=yazi_no,
+                                gelen_yazi_tarih=yazi_tarih,
+                                yazi_turu="gelen",
+                                dosya_eksik=(dosya_verisi is None),
+                            )
+                            suffix = " (Dosya Eksik)" if not dosya_verisi else ""
+                            eklenen.append(item["proje_kodu"] + suffix)
+                        else:
+                            # GİDEN YAZI → Mevcut son revizyonun durumunu güncelle
+                            sonuc = "Hata"
+                            if db_yazi_turu == "onay":
+                                sonuc = self.db.son_revizyonu_onayla(pid, yazi_no, yazi_tarih)
+                            elif db_yazi_turu == "notlu_onay":
+                                sonuc = self.db.son_revizyonu_notlu_onayla(pid, yazi_no, yazi_tarih)
+                            elif db_yazi_turu == "red":
+                                sonuc = self.db.son_revizyonu_reddet(pid, yazi_no, yazi_tarih)
+
+                            if sonuc == "Basarili" or sonuc is True:
+                                eklenen.append(item["proje_kodu"])
+                            else:
+                                hatalar.append(f"{item['proje_kodu']}: {sonuc}")
+
+                    elif item["islem"] == "yeni":
+                        # Yeni proje oluştur (sadece GELEN yazıda mantıklı)
+                        dosya_yolu = item.get("dosya_yolu")
+                        proje_kodu = item.get("proje_kodu", "").strip()
+                        proje_isim = item.get("proje_isim", "").strip()
+
+                        if not proje_kodu:
+                            from PySide6.QtWidgets import QInputDialog
+                            proje_kodu, ok = QInputDialog.getText(
+                                self,
+                                f"Yeni Proje Kodu — {item['ek_metin'][:40]}",
+                                "Proje Kodu:",
+                            )
+                            if not ok or not proje_kodu.strip():
+                                continue
+                            proje_kodu = proje_kodu.strip()
+                        if not proje_isim:
+                            from PySide6.QtWidgets import QInputDialog
+                            proje_isim, ok = QInputDialog.getText(
+                                self,
+                                f"Yeni Proje İsmi — {proje_kodu}",
+                                "Proje İsmi:",
+                                text=item["ek_metin"],
+                            )
+                            if not ok:
+                                continue
+                            proje_isim = proje_isim.strip() or item["ek_metin"]
+
+                        if dosya_yolu:
+                            new_id = self.db.dosyadan_proje_ve_revizyon_ekle(
+                                proje_kodu,
+                                proje_isim,
+                                dosya_yolu,
+                                yazi_turu="gelen",
+                                gelen_yazi_no=yazi_no,
+                                gelen_yazi_tarih=yazi_tarih,
+                            )
+                        else:
+                            # Dosyasız yeni proje oluştur
+                            new_id = self.db.proje_ekle(proje_kodu, proje_isim)
+                            if new_id:
+                                self.db.mevcut_projeye_revizyon_ekle(
+                                    proje_id=new_id,
+                                    revizyon_kodu=item.get("revizyon", "A"),
+                                    gelen_yazi_no=yazi_no,
+                                    gelen_yazi_tarih=yazi_tarih,
+                                    yazi_turu="gelen",
+                                    dosya_eksik=True,
+                                )
+
+                        if new_id:
+                            suffix = " (Dosya Eksik)" if not dosya_yolu else ""
+                            eklenen.append(proje_kodu + suffix)
+                        else:
+                            hatalar.append(f"{proje_kodu}: oluşturulamadı")
+
+                except Exception as e:
+                    self.logger.error("Yazı ek işlemi hatası (%s): %s", item.get("ek_metin"), e, exc_info=True)
+                    hatalar.append(f"{item.get('proje_kodu', '?')}: {e}")
+
+            if eklenen or hatalar:
+                self._invalidate_filter_cache_and_reload()
+                msg = ""
+                if eklenen:
+                    msg += f"✅ {len(eklenen)} ek başarıyla işlendi: {', '.join(eklenen)}\n"
+                if hatalar:
+                    msg += f"⚠️ {len(hatalar)} ek işlenemedi:\n" + "\n".join(hatalar)
+                QMessageBox.information(self, "Ek İşleme Sonucu", msg.strip())
+
+        except Exception as e:
+            self.logger.error("Yazı ek işleme genel hatası: %s", e, exc_info=True)
+            QMessageBox.critical(self, "Hata", f"Ekler işlenirken hata oluştu:\n{e}")
+
 
     def _get_selected_projects(self):
         """Return a dict of selected projects (id -> ProjeModel)."""

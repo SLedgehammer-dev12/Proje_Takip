@@ -1,6 +1,26 @@
 # Değişiklik Günlüğü
 
-# Değişiklik Günlüğü
+## v3.0.14 (12 Mayıs 2026)
+
+### Hata Düzeltmeleri ve Geliştirmeler
+- **Dosyadan Çoklu Proje Oluşturma Çökmesi:** "Dosyadan Proje Oluştur" işlemi tamamlandıktan sonra arka planda eksik tanımlı bir değişken (eklenen_projeler) nedeniyle yaşanan çökme/veritabanına kaydedememe sorunu tamamen giderildi. Projeler artık başarılı bir şekilde veritabanına ekleniyor.
+- **Daha Akıllı OCR Tetikleme (Gelen Yazı):** Sistemin sadece taranmış (resim) PDF'lerde değil, aynı zamanda hatalı dijital metin katmanına sahip "kısmi dijital" PDF'lerde bile, eğer Yazı No bilgisi normal metin içinden çekilemezse pes etmeyip otomatik olarak o sayfayı Tesseract OCR ile 2. kez zorla (Force OCR) taraması sağlandı. Artık sorunlu PDF'lerde de popup ekranındaki form daha yüksek başarı oranıyla doldurulacak.
+
+
+## v3.0.13 (12 Mayıs 2026)
+
+### Hata Düzeltmeleri ve Geliştirmeler
+- **Gelen/Giden Yazıdan Proje Oluşturma (Bağımsız İşlem):** Bu işlem başlatıldığında, ana penceredeki projelerden biri seçiliyse yazıyı yanlışlıkla o projeye bağlama hatası düzeltildi. Artık Gelen/Giden yazıdan proje oluşturma işlemi arka plandaki seçimleri dikkate almıyor ve yalnızca doküman içindeki ekler üzerinden bağımsız projeler/revizyonlar oluşturuyor. (Seçili projeye işlem yapmak için sadece "Seçili Projeler..." altındaki menüler geçerli kalacak.)
+- **Taranmış PDF'lerde OCR Tetikleme İyileştirmesi:** Taranmış (resim tabanlı) yazılar yüklendiğinde, PDF motorunun görünmez veya anlamsız (çöp) karakterler döndürmesi yüzünden uygulamanın "bu metin var" diyerek yanılması ve OCR'ı atlaması sorunu çözüldü. Artık, metinde yeterli sayıda anlamlı harf/rakam bulunamazsa doğrudan Tesseract (OCR) devreye giriyor. Böylece, açılan Gelen/Giden Yazı popup menüsünde "Tarih" ve "Sayı" bilgileri taranmış PDF'lerden de hatasız çekilip doldurulacak.
+
+
+
+### Hata Düzeltmeleri ve Geliştirmeler
+- **Bellek Göstergesi:** Windows'ta psutil kütüphanesi eksik olduğunda bellek kullanımının (`n/a`) görünmesi sorunu, daha güvenilir Windows API (`K32GetProcessMemoryInfo`) çağrıları kullanılarak çözüldü.
+- **Döküman No Algılama:** Proje paftalarındaki antet okunurken Türkçe karakterlerin (Ö/Ü) kullanıldığı "DÖKÜMAN NO" ibarelerinin tanınmaması hatası düzeltildi.
+- **Proje Adı Algılama:** Proje paftalarında "SCALE", "CHECKEDBY" gibi standart antet etiketlerinin yanlışlıkla proje adı olarak algılanması önlendi.
+- **Gelen/Giden Yazı Tarama:** Gelen yazılardaki Sayı numarasının kırpılması sorunu çözüldü; artık sayı numarası tam (örn: KMT.25034.BTS.20251106-027) olarak aktarılıyor.
+- **Yazı Ekleri:** Ekler taranırken revizyon numaralarının (`- P0 -` gibi) doğru eşleştirilmesi ve proje kodlarıyla tam ayrıştırılması sağlandı.
 
 ## v2.1.8.5 (16 Nisan 2026)
 

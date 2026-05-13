@@ -66,12 +66,12 @@ class ProjeTakipDB:
         # self.migration_service = MigrationService(self.conn)
         # self.migration_service.run_migrations()
 
-        # Create initial users if needed
+        # Create initial users if needed (also re-hashes broken entries)
         try:
-            if BCRYPT_AVAILABLE:
-                self.create_initial_users()
+            self.create_initial_users()
         except Exception as e:
             self.logger.warning(f"Failed to create initial users: {e}")
+
 
     def _get_connection(self):
         """Get the main database connection"""
@@ -426,6 +426,8 @@ class ProjeTakipDB:
                 pending.append("ALTER TABLE revizyonlar ADD COLUMN yazi_konu TEXT")
             if "yazi_kurum" not in columns:
                 pending.append("ALTER TABLE revizyonlar ADD COLUMN yazi_kurum TEXT")
+            if "dosya_eksik" not in columns:
+                pending.append("ALTER TABLE revizyonlar ADD COLUMN dosya_eksik INTEGER DEFAULT 0")
             if not pending:
                 return
 
@@ -866,7 +868,7 @@ class ProjeTakipDB:
         self,
         proje_id: int,
         revizyon_kodu: str,
-        dosya_yolu: str,
+        dosya_yolu: str = None,
         aciklama: str = "",
         yazi_turu: str = "yok",
         durum: str = None,
@@ -875,12 +877,16 @@ class ProjeTakipDB:
         gelen_yazi_tarih: Optional[str] = None,
         yazi_konu: Optional[str] = None,
         yazi_kurum: Optional[str] = None,
+        dosya_eksik: bool = False,
     ) -> Optional[int]:
         try:
-            if dosya_verisi is None:
+            if dosya_verisi is None and dosya_yolu:
                 with open(dosya_yolu, "rb") as f:
                     dosya_verisi = f.read()
-            dosya_adi = os.path.basename(dosya_yolu) if dosya_yolu else "unknown"
+            dosya_adi = os.path.basename(dosya_yolu) if dosya_yolu else None
+            # Dosya yoksa eksik flag'i set et
+            if not dosya_verisi:
+                dosya_eksik = True
 
             tarih = datetime.datetime.now()
             
@@ -908,10 +914,13 @@ class ProjeTakipDB:
                 yeni_rev_no = (max_rev + 1) if max_rev is not None else 0
 
                 if not aciklama:
-                    aciklama = f"Revizyon {revizyon_kodu} - dosyadan eklendi"
+                    if dosya_eksik:
+                        aciklama = f"Revizyon {revizyon_kodu} - [DOSYA HENÜZ YÜKLENMEDİ]"
+                    else:
+                        aciklama = f"Revizyon {revizyon_kodu} - dosyadan eklendi"
 
                 self.cursor.execute(
-                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih, yazi_konu, yazi_kurum) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih, yazi_konu, yazi_kurum, dosya_eksik) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         proje_id,
                         yeni_rev_no,
@@ -924,17 +933,20 @@ class ProjeTakipDB:
                         gelen_yazi_tarih,
                         yazi_konu,
                         yazi_kurum,
+                        1 if dosya_eksik else 0,
                     ),
                 )
                 revizyon_id = self.cursor.lastrowid
 
-                self.cursor.execute(
-                    "INSERT INTO dokumanlar (revizyon_id, dosya_adi, dosya_verisi) VALUES (?, ?, ?)",
-                    (revizyon_id, dosya_adi, dosya_verisi),
-                )
+                # Sadece dosya varsa dokumanlar tablosuna kaydet
+                if dosya_verisi and dosya_adi:
+                    self.cursor.execute(
+                        "INSERT INTO dokumanlar (revizyon_id, dosya_adi, dosya_verisi) VALUES (?, ?, ?)",
+                        (revizyon_id, dosya_adi, dosya_verisi),
+                    )
 
             self.logger.info(
-                f"Yeni revizyon eklendi: Proje ID {proje_id}, Rev {revizyon_kodu}, Durum: {durum}"
+                f"Yeni revizyon eklendi: Proje ID {proje_id}, Rev {revizyon_kodu}, Durum: {durum}, DosyaEksik: {dosya_eksik}"
             )
             return revizyon_id
         except Exception as e:
@@ -2214,49 +2226,68 @@ class ProjeTakipDB:
             return False
 
     def create_initial_users(self):
-        """Create initial users if users table is empty."""
+        """Create initial users if users table is empty, or fix broken hashes."""
+        if not BCRYPT_AVAILABLE:
+            self.logger.warning("bcrypt is not available; skipping user setup.")
+            return
+
+        initial_users = [
+            {
+                "username": "alperb.yilmaz",
+                "password": "Botas.2025",
+                "full_name": "Alper Berkan Yılmaz",
+                "role": "admin",
+            },
+            {
+                "username": "omer.erbas",
+                "password": "Botas.2025",
+                "full_name": "Ömer Erbaş",
+                "role": "admin",
+            },
+        ]
+
         try:
-            # Check if users table is empty
-            row = self.cursor.execute("SELECT COUNT(*) FROM users").fetchone()
-            count = row[0] if row else 0
-            if count > 0:
-                self.logger.info("Users already exist, skipping initial user creation")
-                return
+            for user_data in initial_users:
+                existing = self.get_user_by_username(user_data["username"])
+                needs_upsert = False
 
-            # Create initial users
-            initial_users = [
-                {
-                    "username": "alperb.yilmaz",
-                    "password": "Botas.2025",
-                    "full_name": "Alper Berkan Yılmaz",
-                    "role": "admin"
-                },
-                {
-                    "username": "omer.erbas",
-                    "password": "Botas.2025",
-                    "full_name": "Ömer Erbaş",
-                    "role": "admin"
-                }
-            ]
-
-            with self.transaction():
-                for user_data in initial_users:
-                    password_hash = self._hash_password(user_data["password"])
-                    self.cursor.execute(
-                        """INSERT INTO users (username, password_hash, full_name, role, created_at)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (
+                if existing is None:
+                    # Kullanıcı hiç yok — oluştur
+                    needs_upsert = True
+                else:
+                    # Hash geçerli mi? Boş veya bcrypt formatına uymuyorsa yenile
+                    ph = (existing.get("password_hash") or "").strip()
+                    is_valid_bcrypt = ph.startswith("$2b$") or ph.startswith("$2a$") or ph.startswith("$2y$")
+                    if not is_valid_bcrypt:
+                        self.logger.info(
+                            "Kullanıcı %s için geçersiz/eksik hash bulundu; yeniden oluşturuluyor.",
                             user_data["username"],
-                            password_hash,
-                            user_data["full_name"],
-                            user_data["role"],
-                            datetime.datetime.now()
                         )
-                    )
+                        needs_upsert = True
 
-            self.logger.info(f"Created {len(initial_users)} initial users")
+                if needs_upsert:
+                    password_hash = self._hash_password(user_data["password"])
+                    with self.transaction():
+                        self.cursor.execute(
+                            """INSERT INTO users (username, password_hash, full_name, role, created_at)
+                               VALUES (?, ?, ?, ?, ?)
+                               ON CONFLICT(username) DO UPDATE SET
+                                   password_hash = excluded.password_hash,
+                                   full_name = excluded.full_name,
+                                   role = excluded.role""",
+                            (
+                                user_data["username"],
+                                password_hash,
+                                user_data["full_name"],
+                                user_data["role"],
+                                datetime.datetime.now(),
+                            ),
+                        )
+                    self.logger.info("Kullanıcı oluşturuldu/güncellendi: %s", user_data["username"])
+
         except Exception as e:
-            self.logger.error(f"Failed to create initial users: {e}", exc_info=True)
+            self.logger.error(f"Failed to create/update initial users: {e}", exc_info=True)
+
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get user information by username."""
