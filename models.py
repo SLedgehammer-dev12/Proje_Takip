@@ -45,7 +45,8 @@ class ProjeModel:
     tse_gonderildi: Optional[int]
     onay_yazi_no: Optional[str]
     red_yazi_no: Optional[str]
-    kategori_id: Optional[int]  # <-- YENİ EKLENDİ (13. alan)
+    kategori_id: Optional[int]
+    is_flagged: int = 0
 
     def __post_init__(self):
         self.proje_turu = normalize_project_type(self.proje_turu)
@@ -81,3 +82,4 @@ class RevizyonModel:
     takip_notu: Optional[str] = None
     yazi_konu: Optional[str] = None
     yazi_kurum: Optional[str] = None
+    is_flagged: int = 0

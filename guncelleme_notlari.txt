@@ -1,5 +1,16 @@
 PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.0.16 ---
+  * İŞ AKIŞI: Giden yazıdan proje oluşturma/güncelleme akışı tamamen revize edildi.
+  * REVİZYON: Giden yazılar artık mevcut revizyonu güncellemek yerine YENİ bir revizyon satırı ekliyor.
+  * KONTROL: Onaylanan belgeler otomatik olarak "Rev 0" olarak işaretlenirken, Notlu Onay ve Red durumları son revizyon kodunu koruyarak yeni satıra işleniyor.
+  * ARAYÜZ: Giden yazı türü seçimindeki "İptal" butonu "Notlu Onaylı" olarak güncellendi ve işlemden vazgeçme seçeneği eklendi.
+--- Sürüm: v3.0.15 ---
+  * İNCELEME: Hatalı kayıtları raporlamak için revizyon bazlı "Red Flag" (🚩) özelliği eklendi.
+  * GÖRÜNÜM: Hatalı kaydı olan projeler listede 🚩 ikonu ile işaretlenerek veri girişi yapan kullanıcıların dikkati çekilmektedir.
+  * KONTROL: Revizyon sağ tık menüsüne "Hatalı Kayıt İşaretle/Kaldır" seçeneği eklendi.
+  * OCR: "Sayı:", "Konu:" ve tarih (xx/yy/zzzz) tanıma yetenekleri daha geniş regex desenleri ile güçlendirildi.
+  * AKIŞ: Yazıdan proje oluştururken ekler dialog'u artık her zaman otomatik açılarak kullanıcı kontrolüne sunulmaktadır.
 --- Sürüm: v3.0.14 ---
   * İŞ AKIŞI: Gelen yazı işlemi yeni bir revizyon açarken, giden yazı işlemi artık sadece mevcut son revizyonun durumunu güncelliyor.
   * EŞLEŞTİRME: Canlı arama destekli ProjeSecDialog eklendi. Tüm benzer projeler listelenerek doğru projenin seçilmesi sağlandı.

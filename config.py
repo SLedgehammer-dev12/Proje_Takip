@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v3.0.14"
+APP_VERSION = "v3.1.0"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,13 +40,17 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
-    "v3.0.2": [
-        "EXCEL: Backup klasoru altindan acilan veritabani baglaminda proje_listesi.xlsx ust dizin fallback'i ile bulunuyor; yanlis klasor uyarilari azaltildi.",
-        "LOG: Excel dosyasi eksikse sonuc artik cache'leniyor; ayni eksik dosya icin tekrar tekrar warning basilmiyor.",
-        "ASYNC: Proje yukleme watchdog'i, arka plan thread sadece 2 saniye esigini astiysa warning yerine info yaziyor; gercek bos/hata durumlari warning olarak korunuyor.",
-        "DOGRULAMA: Excel loader fallback ve proje yukleme watchdog log seviyesi icin hedefli regression testleri eklendi.",
+    "v3.1.0": [
+        "İŞ AKIŞI: Giden yazıdan proje oluşturma/güncelleme akışı tamamen revize edildi.",
+        "REVİZYON: Giden yazılar artık mevcut revizyonu güncellemek yerine YENİ bir revizyon satırı ekliyor.",
+        "KONTROL: Onaylanan belgeler otomatik olarak 'Rev 0' olarak işaretlenirken, Notlu Onay ve Red durumları son revizyon kodunu koruyarak yeni satıra işleniyor.",
+        "ARAYÜZ: Giden yazı türü seçimindeki 'İptal' butonu 'Notlu Onaylı' olarak güncellendi ve işlemden vazgeçme seçeneği eklendi.",
     ],
-    "v3.0.1": [
+    "v3.0.15": [
+        "İNCELEME: Hatalı kayıtları raporlamak için revizyon bazlı 'Red Flag' (🚩) özelliği eklendi.",
+        "GÖRÜNÜM: Hatalı kaydı olan projeler listede 🚩 ikonu ile işaretlenerek veri girişi yapan kullanıcıların dikkati çekilmektedir.",
+    ],
+    "v3.0.14": [
         "ONIZLEME: Revizyon dokumani yuklu olmasa bile, revizyona bagli yazi dokumani varsa alt panelde yazi on izlemesi artik calisiyor.",
         "DUZELTME: Revizyon preview hatasi uzerinden tum preview state'ini sifirlayan akis ayrildi; ust revizyon on izlemesi ile alt yazi on izlemesi birbirini kilitlemiyor.",
         "DOGRULAMA: MainWindow preview orkestrasyonu icin regression testi eklendi; yazi dokumani olan ancak proje/revizyon dokumani olmayan satirlar hedefli olarak test ediliyor.",

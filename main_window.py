@@ -2836,6 +2836,7 @@ class AnaPencere(QMainWindow):
                 "Yazı Dok.",
                 "Uyarı",
                 "Takip",
+                "Hatalı",
             ]
             self.revizyon_agaci.setHeaderLabels(headers)
 
@@ -2882,6 +2883,9 @@ class AnaPencere(QMainWindow):
                 takip_notu = getattr(rev, "takip_notu", None)
                 if takip_notu:
                     item.setToolTip(9, takip_notu)
+                
+                is_flagged = int(getattr(rev, "is_flagged", 0) or 0)
+                item.setText(10, "🚩 Hatalı" if is_flagged else "-")
 
                 if rev.durum == Durum.ONAYLI.value:
                     item.setForeground(1, QBrush(QColor("green")))
@@ -3651,7 +3655,7 @@ class AnaPencere(QMainWindow):
         if getattr(self, "secili_proje_id", None) not in (None, proje_id):
             return
         try:
-            self.revizyonlari_yukle_render(proje_id, revisions)
+            self.revizyonlari_yukle(proje_id, revisions)
         except Exception as e:
             self.logger.error(f"_on_revisions_loaded hata: {e}", exc_info=True)
 
@@ -3765,6 +3769,10 @@ class AnaPencere(QMainWindow):
         takip_kaldir_action.setEnabled(
             int(getattr(rev, "takipte_mi", 0) or 0) == 1
         )
+        menu.addSeparator()
+        is_flagged = int(getattr(rev, "is_flagged", 0) or 0)
+        flag_text = "🚩 Hatalı Kayıt İşaretini Kaldır" if is_flagged else "🚩 Hatalı Kayıt Olarak İşaretle"
+        flag_action = menu.addAction(flag_text)
 
         secim = menu.exec(self.revizyon_agaci.viewport().mapToGlobal(position))
         
@@ -3774,6 +3782,12 @@ class AnaPencere(QMainWindow):
             self.revizyon_takip_notu_ekle_duzenle()
         elif secim == takip_kaldir_action:
             self.revizyon_takip_kaldir()
+        elif secim == flag_action:
+            # Toggle flag
+            success = self.db.revizyon_flag_durumu_guncelle(rev.id, not bool(is_flagged))
+            if success:
+                self._refresh_current_project(keep_rev_id=rev.id)
+                self._invalidate_filter_cache_and_reload()
 
     # --- GÜNCELLEME (ADIM 5.3) ---
     def _kategori_gorunumu_context_menu(self, position):
@@ -5788,6 +5802,10 @@ class AnaPencere(QMainWindow):
             # Dosya yolu zaten seçildi, dialogda göstermeye gerek yok veya set edebiliriz
             dialog.dosya_etiketi.setText(dosya_adi)
             dialog.dosya_yolu = dosya_yolu  # Dialogun dosya yolunu set et
+            # OCR'dan çıkarılan konu bilgisini doldurun — kullanıcı değiştirebilir
+            ocr_konu = letter_bilgisi.get("konu", "") or ""
+            if ocr_konu:
+                dialog.konu_entry.setText(ocr_konu)
 
             if not dialog.exec():
                 return
@@ -5795,24 +5813,37 @@ class AnaPencere(QMainWindow):
             yazi_data = dialog.get_data()
             yazi_no = yazi_data["yazi_no"]
             tarih = yazi_data["tarih"]
+            yazi_konu = yazi_data.get("konu") or None
             # Dosya yolu dialogdan geleni kullan (değiştirilmiş olabilir)
             final_dosya_yolu = yazi_data["dosya_yolu"] or dosya_yolu
 
             # Determine yazi_turu (db) based on db_action. We need this BEFORE saving the yazi dokuman.
             db_yazi_turu = "gelen"
             if db_action == "giden":
-                # Ask user for onay or red for generic giden operation (do this before saving the yazi dokuman)
+                # Ask user for onay, notlu onay, or red for generic giden operation
                 msg = QMessageBox(self)
                 msg.setWindowTitle("Yazı Türü")
                 msg.setText("Bu giden yazı ne tür bir işlemdir?")
-                msg.addButton("Onay", QMessageBox.AcceptRole)
-                msg.addButton("Red", QMessageBox.RejectRole)
-                msg.addButton("İptal", QMessageBox.DestructiveRole)
-                ret = msg.exec()
+                
+                onay_btn = msg.addButton("Onay", QMessageBox.ActionRole)
+                notlu_onay_btn = msg.addButton("Notlu Onaylı", QMessageBox.ActionRole)
+                red_btn = msg.addButton("Red", QMessageBox.ActionRole)
+                vazgec_btn = msg.addButton("Vazgeç", QMessageBox.RejectRole)
+                
+                msg.exec()
+                clicked = msg.clickedButton()
 
-                if ret == QMessageBox.DestructiveRole:
+                if clicked == vazgec_btn:
                     return
-                db_yazi_turu = "onay" if ret == 0 else "red"
+                
+                if clicked == onay_btn:
+                    db_yazi_turu = "onay"
+                elif clicked == notlu_onay_btn:
+                    db_yazi_turu = "notlu_onay"
+                elif clicked == red_btn:
+                    db_yazi_turu = "red"
+                else:
+                    return # Fallback for closing the window
             elif db_action == "onay":
                 db_yazi_turu = "onay"
             elif db_action == "notlu_onay":
@@ -5854,31 +5885,16 @@ class AnaPencere(QMainWindow):
             # 5b. İşlemi kendi başına başlat (Seçili projeleri etkilemeden)
             secilen_kodlar = []
 
-            # 8. Yazının ekleri varsa YaziEklerDialog'u göster
+            # 8. Yazı ekleri (her zaman YaziEklerDialog aç — ekleri yazıdan okunmuş bile olsa
+            #    kullanıcı listeyı inceleyip onaylamalı / düzenleme yapabilmeli)
             try:
                 ekler_raw = letter_bilgisi.get("ekler", "")
                 ilgi_raw = letter_bilgisi.get("ilgi", "")
-                if ekler_raw and ekler_raw.strip():
-                    cevap = QMessageBox.question(
-                        self,
-                        "Yazı Ekleri Tespit Edildi",
-                        f"Bu yazıda ek(ler) bulundu:\n\n{ekler_raw[:300]}\n\n"
-                        "Ekleri proje veritabanıyla ilişkilendirmek ister misiniz?",
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.Yes,
-                    )
-                    if cevap == QMessageBox.Yes:
-                        self._yazi_eklerini_isle(yazi_no, tarih, ekler_raw, ilgi_raw, letter_bilgisi.get("ekler_listesi", []), db_yazi_turu=db_yazi_turu)
-                else:
-                    cevap = QMessageBox.question(
-                        self,
-                        "Yazı Ekleri",
-                        "Bu yazıda otomatik ek tespit edilemedi.\nManuel olarak ek dosyası yüklemek veya mevcut projelerle ilişkilendirmek ister misiniz?",
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No,
-                    )
-                    if cevap == QMessageBox.Yes:
-                        self._yazi_eklerini_isle(yazi_no, tarih, "", ilgi_raw, [], db_yazi_turu=db_yazi_turu)
+                ekler_listesi = letter_bilgisi.get("ekler_listesi", [])
+                self._yazi_eklerini_isle(
+                    yazi_no, tarih, ekler_raw, ilgi_raw, ekler_listesi,
+                    db_yazi_turu=db_yazi_turu, yazi_konu=yazi_konu
+                )
             except Exception as e:
                 self.logger.debug("Yazı ek analizi gösterilemedi: %s", e)
 
@@ -5886,7 +5902,7 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"Toplu yazı işlemi hatası: {e}", exc_info=True)
             QMessageBox.critical(self, "Hata", f"İşlem sırasında hata oluştu: {e}")
 
-    def _yazi_eklerini_isle(self, yazi_no: str, yazi_tarih: str, ekler_raw: str, ilgi_raw: str = "", ekler_listesi: list = None, db_yazi_turu: str = "gelen"):
+    def _yazi_eklerini_isle(self, yazi_no: str, yazi_tarih: str, ekler_raw: str, ilgi_raw: str = "", ekler_listesi: list = None, db_yazi_turu: str = "gelen", yazi_konu: str = None):
         """
         YaziEklerDialog'u açar ve kullanıcının seçimlerine göre işlem yapar.
 
@@ -5941,23 +5957,50 @@ class AnaPencere(QMainWindow):
                                 gelen_yazi_tarih=yazi_tarih,
                                 yazi_turu="gelen",
                                 dosya_eksik=(dosya_verisi is None),
+                                yazi_konu=yazi_konu,
                             )
                             suffix = " (Dosya Eksik)" if not dosya_verisi else ""
                             eklenen.append(item["proje_kodu"] + suffix)
                         else:
-                            # GİDEN YAZI → Mevcut son revizyonun durumunu güncelle
-                            sonuc = "Hata"
-                            if db_yazi_turu == "onay":
-                                sonuc = self.db.son_revizyonu_onayla(pid, yazi_no, yazi_tarih)
-                            elif db_yazi_turu == "notlu_onay":
-                                sonuc = self.db.son_revizyonu_notlu_onayla(pid, yazi_no, yazi_tarih)
-                            elif db_yazi_turu == "red":
-                                sonuc = self.db.son_revizyonu_reddet(pid, yazi_no, yazi_tarih)
-
-                            if sonuc == "Basarili" or sonuc is True:
-                                eklenen.append(item["proje_kodu"])
-                            else:
-                                hatalar.append(f"{item['proje_kodu']}: {sonuc}")
+                            # GİDEN YAZI → YENİ REVİZYON aç (Kullanıcı isteği v3.0.15)
+                            try:
+                                son_rev = self.db.son_revizyonu_getir(pid)
+                                yeni_rev_kodu = item.get("revizyon") or "A"
+                                
+                                if db_yazi_turu == "onay":
+                                    yeni_rev_kodu = "0"
+                                elif db_yazi_turu in ["notlu_onay", "red"]:
+                                    if son_rev:
+                                        yeni_rev_kodu = son_rev.revizyon_kodu
+                                
+                                # Durum metni
+                                final_durum = "Onayli"
+                                if db_yazi_turu == "notlu_onay":
+                                    final_durum = "Notlu Onayli"
+                                elif db_yazi_turu == "red":
+                                    final_durum = "Reddedildi"
+                                    
+                                new_id = self.db.mevcut_projeye_revizyon_ekle(
+                                    proje_id=pid,
+                                    revizyon_kodu=yeni_rev_kodu,
+                                    dosya_yolu=dosya_yolu,
+                                    dosya_verisi=dosya_verisi,
+                                    yazi_turu="giden",
+                                    onay_yazi_no=(yazi_no if db_yazi_turu in ["onay", "notlu_onay"] else None),
+                                    onay_yazi_tarih=(yazi_tarih if db_yazi_turu in ["onay", "notlu_onay"] else None),
+                                    red_yazi_no=(yazi_no if db_yazi_turu == "red" else None),
+                                    red_yazi_tarih=(yazi_tarih if db_yazi_turu == "red" else None),
+                                    durum=final_durum,
+                                    dosya_eksik=(dosya_verisi is None),
+                                    yazi_konu=yazi_konu
+                                )
+                                if new_id:
+                                    eklenen.append(item["proje_kodu"])
+                                else:
+                                    hatalar.append(f"{item['proje_kodu']}: Kayıt oluşturulamadı")
+                            except Exception as e_inner:
+                                self.logger.error("Giden yazı ekleme hatası: %s", e_inner, exc_info=True)
+                                hatalar.append(f"{item['proje_kodu']}: {str(e_inner)}")
 
                     elif item["islem"] == "yeni":
                         # Yeni proje oluştur (sadece GELEN yazıda mantıklı)
@@ -5995,6 +6038,7 @@ class AnaPencere(QMainWindow):
                                 yazi_turu="gelen",
                                 gelen_yazi_no=yazi_no,
                                 gelen_yazi_tarih=yazi_tarih,
+                                yazi_konu=yazi_konu,
                             )
                         else:
                             # Dosyasız yeni proje oluştur
@@ -6007,6 +6051,7 @@ class AnaPencere(QMainWindow):
                                     gelen_yazi_tarih=yazi_tarih,
                                     yazi_turu="gelen",
                                     dosya_eksik=True,
+                                    yazi_konu=yazi_konu,
                                 )
 
                         if new_id:
@@ -6311,21 +6356,22 @@ class AnaPencere(QMainWindow):
             for p in projects:
                 try:
                     # Determine emoji and color based on status
-                    emoji = "âšª"  # Default: Waiting
+                    emoji = "⚪"  # Default: Waiting
                     color = None
 
-                    if p.durum == "Onayli":  # Fixed: was "Onaylandı"
-                        emoji = "ğŸŸ¢"
+                    if p.durum == "Onayli":
+                        emoji = "🟢"
                         color = QColor("#d4edda")  # Light Green
-                    elif p.durum == "Notlu Onayli":  # Fixed: was "Onaylandı (Notlu)"
-                        emoji = "ğŸŸ "
+                    elif p.durum == "Notlu Onayli":
+                        emoji = "🟠"
                         color = QColor("#fff3cd")  # Light Orange
                     elif p.durum == "Reddedildi":
-                        emoji = "ğŸ”´"
+                        emoji = "🔴"
                         color = QColor("#f8d7da")  # Light Red
 
+                    flag = "🚩 " if getattr(p, "is_flagged", 0) else ""
                     text = f"{p.proje_kodu} - {p.proje_ismi}"
-                    display_text = f"{emoji} {text}"
+                    display_text = f"{emoji} {flag}{text}"
 
                     # List item with color
                     list_item = QListWidgetItem(display_text)

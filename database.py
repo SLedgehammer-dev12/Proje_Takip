@@ -221,6 +221,7 @@ class ProjeTakipDB:
                     red_yazi_no TEXT, red_yazi_tarih TEXT, proje_rev_no INTEGER,
                     tse_gonderildi INTEGER DEFAULT 0, tse_yazi_no TEXT, tse_yazi_tarih TEXT,
                     yazi_turu TEXT DEFAULT 'gelen', yazi_konu TEXT, yazi_kurum TEXT,
+                    dosya_eksik INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
                     FOREIGN KEY (proje_id) REFERENCES projeler (id) ON DELETE CASCADE
                 )"""
             )
@@ -428,6 +429,8 @@ class ProjeTakipDB:
                 pending.append("ALTER TABLE revizyonlar ADD COLUMN yazi_kurum TEXT")
             if "dosya_eksik" not in columns:
                 pending.append("ALTER TABLE revizyonlar ADD COLUMN dosya_eksik INTEGER DEFAULT 0")
+            if "is_flagged" not in columns:
+                pending.append("ALTER TABLE revizyonlar ADD COLUMN is_flagged INTEGER DEFAULT 0")
             if not pending:
                 return
 
@@ -714,6 +717,7 @@ class ProjeTakipDB:
         kategori_id: Optional[int] = None,
         gelen_yazi_no: Optional[str] = None,
         gelen_yazi_tarih: Optional[str] = None,
+        yazi_konu: Optional[str] = None,
     ) -> Optional[Tuple]:
         try:
             with open(dosya_yolu, "rb") as f:
@@ -733,7 +737,7 @@ class ProjeTakipDB:
                 proje_id = self.cursor.lastrowid
 
                 self.cursor.execute(
-                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih, yazi_konu) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         proje_id,
                         0,
@@ -744,6 +748,7 @@ class ProjeTakipDB:
                         yazi_turu,
                         gelen_yazi_no,
                         gelen_yazi_tarih,
+                        yazi_konu,
                     ),
                 )
                 revizyon_id = self.cursor.lastrowid
@@ -841,26 +846,15 @@ class ProjeTakipDB:
         return "A"
 
     def son_revizyon_durumu_getir(self, proje_id: int) -> Optional[str]:
-        """Get the status (durum) of the most recent revision for a project.
-        
-        Returns the durum string (e.g., 'Onayli', 'Onaysiz', 'Reddedildi', 'Notlu Onayli')
-        of the latest revision, or None if no revisions exist.
-        
-        Args:
-            proje_id: Project ID to get the last revision status for
-            
-        Returns:
-            Status string of the last revision, or None if no revisions
-        """
+        """Projenin en son revizyonunun durumunu döndürür."""
+        rev = self.son_revizyonu_getir(proje_id)
+        return rev.durum if rev else None
+
+    def son_revizyonu_getir(self, proje_id: int) -> Optional[RevizyonModel]:
+        """Projenin en son revizyonunu model olarak döndürür."""
         try:
-            row = self.cursor.execute(
-                """SELECT durum FROM revizyonlar 
-                   WHERE proje_id = ? 
-                   ORDER BY proje_rev_no DESC, id DESC 
-                   LIMIT 1""",
-                (proje_id,),
-            ).fetchone()
-            return row[0] if row else None
+            revs = self.revizyonlari_getir(proje_id)
+            return revs[0] if revs else None
         except Exception:
             return None
 
@@ -875,6 +869,10 @@ class ProjeTakipDB:
         dosya_verisi: Optional[bytes] = None,
         gelen_yazi_no: Optional[str] = None,
         gelen_yazi_tarih: Optional[str] = None,
+        onay_yazi_no: Optional[str] = None,
+        onay_yazi_tarih: Optional[str] = None,
+        red_yazi_no: Optional[str] = None,
+        red_yazi_tarih: Optional[str] = None,
         yazi_konu: Optional[str] = None,
         yazi_kurum: Optional[str] = None,
         dosya_eksik: bool = False,
@@ -920,7 +918,14 @@ class ProjeTakipDB:
                         aciklama = f"Revizyon {revizyon_kodu} - dosyadan eklendi"
 
                 self.cursor.execute(
-                    "INSERT INTO revizyonlar (proje_id, proje_rev_no, revizyon_kodu, aciklama, durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih, yazi_konu, yazi_kurum, dosya_eksik) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO revizyonlar (
+                        proje_id, proje_rev_no, revizyon_kodu, aciklama, 
+                        durum, tarih, yazi_turu, gelen_yazi_no, gelen_yazi_tarih, 
+                        onay_yazi_no, onay_yazi_tarih, red_yazi_no, red_yazi_tarih,
+                        yazi_konu, yazi_kurum, dosya_eksik
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                     (
                         proje_id,
                         yeni_rev_no,
@@ -931,6 +936,10 @@ class ProjeTakipDB:
                         yazi_turu,
                         gelen_yazi_no,
                         gelen_yazi_tarih,
+                        onay_yazi_no,
+                        onay_yazi_tarih,
+                        red_yazi_no,
+                        red_yazi_tarih,
                         yazi_konu,
                         yazi_kurum,
                         1 if dosya_eksik else 0,
@@ -1058,7 +1067,8 @@ class ProjeTakipDB:
                 WHEN r.durum = '{Durum.ONAYSIZ.value}' THEN 'mavi'
                 ELSE 'gri'
             END as durum_renk,
-            p.hiyerarsi, r.durum, r.tse_gonderildi, r.onay_yazi_no, r.red_yazi_no, p.kategori_id
+            p.hiyerarsi, r.durum, r.tse_gonderildi, r.onay_yazi_no, r.red_yazi_no, p.kategori_id,
+            EXISTS(SELECT 1 FROM revizyonlar r2 WHERE r2.proje_id = p.id AND r2.is_flagged = 1) as is_flagged
         FROM projeler p
         LEFT JOIN SonRevizyon r ON p.id = r.proje_id AND r.rn = 1
         ORDER BY p.id DESC
@@ -1266,6 +1276,7 @@ class ProjeTakipDB:
         tse_yazi_tarih: Optional[str],
         yazi_konu: Optional[str] = None,
         yazi_kurum: Optional[str] = None,
+        is_flagged: int = 0
     ) -> bool:
         try:
             # Determine yazi_turu to set (prioritize giden if onay/red provided)
@@ -1284,7 +1295,7 @@ class ProjeTakipDB:
                             onay_yazi_no = ?, onay_yazi_tarih = ?,
                             red_yazi_no = ?, red_yazi_tarih = ?,
                             tse_gonderildi = ?, tse_yazi_no = ?, tse_yazi_tarih = ?,
-                            yazi_turu = ?, yazi_konu = ?, yazi_kurum = ?
+                            yazi_turu = ?, yazi_konu = ?, yazi_kurum = ?, is_flagged = ?
                         WHERE id = ?
                     """,
                         (
@@ -1301,6 +1312,7 @@ class ProjeTakipDB:
                             yazi_turu,
                             yazi_konu,
                             yazi_kurum,
+                            is_flagged,
                             revizyon_id,
                         ),
                     )
@@ -1312,7 +1324,7 @@ class ProjeTakipDB:
                             onay_yazi_no = ?, onay_yazi_tarih = ?,
                             red_yazi_no = ?, red_yazi_tarih = ?,
                             tse_gonderildi = ?, tse_yazi_no = ?, tse_yazi_tarih = ?,
-                            yazi_konu = ?, yazi_kurum = ?
+                            yazi_konu = ?, yazi_kurum = ?, is_flagged = ?
                         WHERE id = ?
                     """,
                         (
@@ -1328,6 +1340,7 @@ class ProjeTakipDB:
                             tse_yazi_tarih,
                             yazi_konu,
                             yazi_kurum,
+                            is_flagged,
                             revizyon_id,
                         ),
                     )
@@ -1540,7 +1553,7 @@ class ProjeTakipDB:
                        ELSE 0
                    END as takipte_mi,
                     (SELECT t.takip_notu FROM revizyon_takipleri t WHERE t.revizyon_id = r.id LIMIT 1) as takip_notu,
-                    r.yazi_konu, r.yazi_kurum
+                    r.yazi_konu, r.yazi_kurum, r.is_flagged
             FROM revizyonlar r
             WHERE r.proje_id = ?
             ORDER BY r.proje_rev_no DESC
@@ -1788,6 +1801,21 @@ class ProjeTakipDB:
         """
         self.cursor.execute(sorgu.format(where_clause=where_clause))
         return self.cursor.fetchall()
+
+    def revizyon_flag_durumu_guncelle(self, revizyon_id: int, is_flagged: bool) -> bool:
+        """Revizyonun hatalı kayıt (flag) durumunu günceller."""
+        try:
+            flag_val = 1 if is_flagged else 0
+            with self.transaction():
+                self.cursor.execute(
+                    "UPDATE revizyonlar SET is_flagged = ? WHERE id = ?",
+                    (flag_val, revizyon_id),
+                )
+            self.logger.info(f"Revizyon flag durumu güncellendi: ID={revizyon_id}, Flag={flag_val}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Revizyon flag güncelleme hatası: {e}")
+            return False
 
     def revizyonu_sil(self, revizyon_id: int) -> bool:
         """Delete a revision and its document from the database.

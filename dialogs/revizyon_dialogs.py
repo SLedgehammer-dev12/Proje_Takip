@@ -464,6 +464,10 @@ class OnayRedDialog(QDialog):
         dosya_layout.addWidget(self.dosya_etiketi)
         dosya_layout.addWidget(btn_gozat)
         layout.addRow("Yazı Dokümanı:", dosya_layout)
+        # Konu: OCR'dan otomatik doldurulan, kullanıcı değiştirebilir
+        self.konu_entry = QLineEdit()
+        self.konu_entry.setPlaceholderText("Yazı konusu (OCR'dan otomatik doldurulur)")
+        layout.addRow("Konu:", self.konu_entry)
         self.yazi_no_combo.currentTextChanged.connect(self.yazi_secilince)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
         buttons.accepted.connect(self.accept)
@@ -528,6 +532,7 @@ class OnayRedDialog(QDialog):
             "yazi_no": self.yazi_no_combo.currentText().split("|", 1)[0].strip(),
             "tarih": self.tarih_entry.text().strip(),
             "dosya_yolu": self.dosya_yolu,
+            "konu": self.konu_entry.text().strip() or None,
         }
 
     def accept(self):

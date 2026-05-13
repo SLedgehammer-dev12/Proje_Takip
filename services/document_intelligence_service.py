@@ -45,7 +45,7 @@ class DocumentIntelligenceService:
     _LETTER_DATE_NO_PATTERNS = (
         # Pattern 1: "DD.MM.YYYY ... 12345 sayılı" or "DD.MM.YYYY tarihli 12345"
         re.compile(
-            r"(\d{2}\.\d{2}\.\d{4})\s*(?:tarih(?:li)?\s*(?:ve)?\s*)?([0-9]{1,12})\s*(?:sayılı|sayili|no'?lu|nolu)?",
+            r"(\d{2}[\./]\d{2}[\./]\d{4})\s*(?:tarih(?:li)?\s*(?:ve)?\s*)?([0-9]{1,12})\s*(?:sayılı|sayili|no'?lu|nolu)?",
             re.IGNORECASE,
         ),
         # Pattern 2: Full "Sayı: CODE/NUMBER" — captures the full code then trailing digits
@@ -56,7 +56,7 @@ class DocumentIntelligenceService:
         ),
         # Pattern 3: Sayı followed immediately by digits (legacy)
         re.compile(
-            r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([0-9]{1,12}).{0,80}?(\d{2}\.\d{2}\.\d{4})",
+            r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([0-9]{1,12}).{0,80}?(\d{2}[\./]\d{2}[\./]\d{4})",
             re.IGNORECASE | re.DOTALL,
         ),
     )
@@ -428,19 +428,24 @@ class DocumentIntelligenceService:
         if not yazi_no:
             # Fallback: Just look for Sayı/Evrak no
             sayi_m = re.search(
-                r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc\.\-_/]+(?:[/\-][0-9]+)+|[0-9]{2,12})",
+                r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc\.\-_/]+)",
                 normalized,
                 re.IGNORECASE
             )
             if sayi_m:
                 full_code = sayi_m.group(1).strip()
-                yazi_no = full_code
+                # Clean trailing non-alphanumeric chars
+                yazi_no = re.sub(r'[\s\.\-_/]+$', '', full_code)
                 
         if not yazi_tarih:
             # Fallback: Just look for a date near the top
-            date_m = re.search(r"(\d{2}\.\d{2}\.\d{4})", normalized[:1000])
+            date_m = re.search(r"(\d{2}[\./]\d{2}[\./]\d{4})", normalized[:1000])
             if date_m:
                 yazi_tarih = date_m.group(1)
+                
+        # Standardize slashes to dots in date
+        if yazi_tarih:
+            yazi_tarih = yazi_tarih.replace("/", ".")
 
         konu = self._extract_letter_subject(normalized)
         kurum = self._extract_letter_institution(normalized, konu)
