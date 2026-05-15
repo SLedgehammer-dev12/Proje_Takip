@@ -20,6 +20,10 @@ from project_types import normalize_project_type
 from utils import get_class_logger
 # CLEANUP: migration_service removed - migrations completed
 
+# Python 3.12+: Suppress deprecation warning for default datetime adapter.
+# ISO 8601 format is the standard SQLite-compatible representation.
+sqlite3.register_adapter(datetime.datetime, lambda dt: dt.isoformat())
+
 
 class ProjeTakipDB:
     def __init__(self, db_adi="projeler.db", allow_create: bool = True):
