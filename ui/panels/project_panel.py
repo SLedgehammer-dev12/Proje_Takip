@@ -160,6 +160,11 @@ class ProjectPanel(QWidget):
         """Projeleri UI'a yükle. use_batch=False ise senkron populate yap (canlı arama için)."""
         selected_project_id = self._get_selected_project_id()
 
+        # Race condition önleme: her çağrıda yeni bir generation ata.
+        # Eski batch timer'lar stale generation görünce hemen çıkar.
+        self._populate_generation = getattr(self, "_populate_generation", 0) + 1
+        current_gen = self._populate_generation
+
         # Ön hazırlık: temizle ve kategorileri kur
         self.proje_listesi_widget.setUpdatesEnabled(False)
         self.proje_agaci_widget.setUpdatesEnabled(False)
@@ -203,7 +208,7 @@ class ProjectPanel(QWidget):
             del list_blocker
             del tree_blocker
 
-        def _add_project_item(proje):
+        def _add_project_item(proje, fallback_parent=kategorisiz_item):
             """Tek bir projeyi hem liste hem ağaç görünümüne ekle."""
             is_flagged = int(getattr(proje, "is_flagged", 0) or 0)
             flag_prefix = "🚩 " if is_flagged else ""
@@ -247,7 +252,7 @@ class ProjectPanel(QWidget):
 
             # Ağaç görünümü
             kategori_id = proje.kategori_id if proje.kategori_id is not None else 0
-            parent_item = self.kategori_items_map.get(kategori_id, kategorisiz_item)
+            parent_item = self.kategori_items_map.get(kategori_id, fallback_parent)
 
             t_item = QTreeWidgetItem(parent_item)
             t_item.setText(0, display_text)
@@ -284,6 +289,10 @@ class ProjectPanel(QWidget):
             self._pending_project_iter = iter(projects)
 
             def _add_batch():
+                # Stale timer kontrolü: yeni _populate_ui çağrısı olmuşsa hemen çık
+                if getattr(self, "_populate_generation", 0) != current_gen:
+                    return
+
                 batch = list(itertools.islice(self._pending_project_iter, self._batch_size))
                 if not batch:
                     _finalize()
