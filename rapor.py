@@ -230,7 +230,6 @@ def rapor_pdf_olustur(rapor_verisi: RaporVerisi, dosya_yolu: str) -> bool:
         return False
 
     try:
-        # PDF belgesi oluştur (A4 landscape)
         doc = SimpleDocTemplate(
             dosya_yolu,
             pagesize=landscape(A4),
@@ -240,421 +239,18 @@ def rapor_pdf_olustur(rapor_verisi: RaporVerisi, dosya_yolu: str) -> bool:
             bottomMargin=2 * cm,
             encoding="utf-8",
         )
-        # İçerik listesi
         story = []
-        # Stiller
         styles = getSampleStyleSheet()
-        # Türkçe karakter desteği için font ayarla
         font_name = _resolve_report_font_name()
-        # Başlık stili
-        baslik_style = ParagraphStyle(
-            "BaslikStyle",
-            parent=styles["Heading1"],
-            fontName=font_name,
-            fontSize=18,
-            textColor=colors.HexColor("#1a5490"),
-            alignment=TA_CENTER,
-            spaceAfter=12,
-        )
-        # Alt başlık stili
-        alt_baslik_style = ParagraphStyle(
-            "AltBaslikStyle",
-            parent=styles["Heading2"],
-            fontName=font_name,
-            fontSize=14,
-            textColor=colors.HexColor("#2c5aa0"),
-            spaceAfter=10,
-        )
-        # Normal metin
-        normal_style = styles["Normal"]
-        normal_style.fontName = font_name
-        normal_style.fontSize = 10
+        baslik_style, alt_baslik_style, normal_style = _create_styles(styles, font_name)
 
-        # =============================================================================
-        # BAŞLIK
-        # =============================================================================
+        _add_header(story, rapor_verisi, baslik_style, alt_baslik_style, normal_style)
+        _add_target_table(story, alt_baslik_style)
+        _add_approved_table(story, rapor_verisi, alt_baslik_style)
+        _add_summary(story, rapor_verisi, alt_baslik_style, normal_style)
 
-        story.append(Paragraph(f"<b>{APP_NAME}</b>", baslik_style))
-        story.append(Paragraph("Proje Onay Durum Raporu", alt_baslik_style))
-        story.append(
-            Paragraph(f"Rapor Tarihi: {rapor_verisi.olusturma_tarihi}", normal_style)
-        )
-        story.append(Spacer(1, 0.5 * cm))
-
-        # =============================================================================
-        # TABLO 1: HEDEF PROJE SAYILARI
-        # =============================================================================
-
-        story.append(Paragraph("<b>1. Hedef Proje Sayıları</b>", alt_baslik_style))
-
-        tablo1_data = [["Proje Türü", "Hedef Sayı"]]
-
-        for tur, hedef in HEDEF_PROJELER.items():
-            tablo1_data.append([tur, str(hedef)])
-
-        tablo1_data.append(["TOPLAM", str(TOPLAM_HEDEF)])
-
-        tablo1 = Table(tablo1_data, colWidths=[10 * cm, 5 * cm])
-        tablo1.setStyle(
-            TableStyle(
-                [
-                    # Başlık satırı
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c5aa0")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, 0), 12),
-                    ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-                    # Veri satırları
-                    ("BACKGROUND", (0, 1), (-1, -2), colors.beige),
-                    ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
-                    ("FONTSIZE", (0, 1), (-1, -2), 10),
-                    ("ALIGN", (0, 1), (0, -1), "LEFT"),
-                    ("ALIGN", (1, 1), (1, -1), "CENTER"),
-                    # Toplam satırı
-                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#4a7ba7")),
-                    ("TEXTCOLOR", (0, -1), (-1, -1), colors.whitesmoke),
-                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, -1), (-1, -1), 11),
-                    # Çizgiler
-                    ("GRID", (0, 0), (-1, -1), 1, colors.black),
-                    ("LINEBELOW", (0, 0), (-1, 0), 2, colors.black),
-                ]
-            )
-        )
-
-        story.append(tablo1)
-        story.append(Spacer(1, 1 * cm))
-
-        # =============================================================================
-        # TABLO 2: ONAYLI PROJELER VE ORANLAR
-        # =============================================================================
-
-        story.append(
-            Paragraph(
-                "<b>2. Onaylı Projeler ve Gerçekleşme Oranları</b>", alt_baslik_style
-            )
-        )
-
-        tablo2_data = [
-            [
-                "Proje Türü",
-                "Hedef",
-                "Onaylı\n(Toplam)",
-                "Siemens",
-                "Oran\n(Siemens Dahil)",
-                "Oran\n(Siemens Hariç)",
-            ]
-        ]
-
-        for tur in HEDEF_PROJELER.keys():
-            hedef = HEDEF_PROJELER[tur]
-            onayli = rapor_verisi.onayli_projeler[tur]
-            siemens = rapor_verisi.siemens_projeler[tur]
-            oran_dahil = rapor_verisi.oran_siemens_dahil[tur]
-            oran_haric = rapor_verisi.oran_siemens_haric[tur]
-
-            tablo2_data.append(
-                [
-                    tur,
-                    str(hedef),
-                    str(onayli),
-                    str(siemens),
-                    f"%{oran_dahil:.1f}",
-                    f"%{oran_haric:.1f}",
-                ]
-            )
-
-        # Toplam satırı
-        tablo2_data.append(
-            [
-                "TOPLAM",
-                str(TOPLAM_HEDEF),
-                str(rapor_verisi.toplam_onayli),
-                str(rapor_verisi.toplam_siemens),
-                f"%{rapor_verisi.genel_oran_siemens_dahil:.1f}",
-                f"%{rapor_verisi.genel_oran_siemens_haric:.1f}",
-            ]
-        )
-
-        tablo2 = Table(
-            tablo2_data, colWidths=[5 * cm, 3 * cm, 3 * cm, 3 * cm, 4 * cm, 4 * cm]
-        )
-        tablo2.setStyle(
-            TableStyle(
-                [
-                    # Başlık satırı
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c5aa0")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, 0), 10),
-                    ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-                    ("VALIGN", (0, 0), (-1, 0), "MIDDLE"),
-                    # Veri satırları
-                    ("BACKGROUND", (0, 1), (-1, -2), colors.beige),
-                    ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
-                    ("FONTSIZE", (0, 1), (-1, -2), 9),
-                    ("ALIGN", (0, 1), (0, -1), "LEFT"),
-                    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
-                    # Toplam satırı
-                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#4a7ba7")),
-                    ("TEXTCOLOR", (0, -1), (-1, -1), colors.whitesmoke),
-                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, -1), (-1, -1), 10),
-                    # Çizgiler
-                    ("GRID", (0, 0), (-1, -1), 1, colors.black),
-                    ("LINEBELOW", (0, 0), (-1, 0), 2, colors.black),
-                ]
-            )
-        )
-
-        story.append(tablo2)
-        story.append(Spacer(1, 1 * cm))
-
-        # =============================================================================
-        # ÖZET AÇIKLAMALAR
-        # =============================================================================
-
-        story.append(Paragraph("<b>3. Özet Değerlendirme</b>", alt_baslik_style))
-
-        ozet_text = f"""
-        <b>Toplam Hedef Proje Sayısı:</b> {TOPLAM_HEDEF}<br/>
-        <b>Onaylanan Toplam Proje Sayısı:</b> {rapor_verisi.toplam_onayli}<br/>
-        <b>Siemens Projesi (Onaylı):</b> {rapor_verisi.toplam_siemens}<br/>
-        <br/>
-        <b>Genel Gerçekleşme Oranı (Siemens Dahil):</b> %{rapor_verisi.genel_oran_siemens_dahil:.1f}<br/>
-        <b>Genel Gerçekleşme Oranı (Siemens Hariç):</b> %{rapor_verisi.genel_oran_siemens_haric:.1f}<br/>
-        <br/>
-        <i>Not: Siemens projeleri, proje kodunda 'SIEMENS' veya 'SMN' içeren ve en az bir revizyonu onaylanmış projelerdir.</i>
-        """
-
-        story.append(Paragraph(ozet_text, normal_style))
-        story.append(Spacer(1, 1 * cm))
-
-        # =============================================================================
-        # GRAFİKLER
-        # =============================================================================
-
-        story.append(PageBreak())  # Yeni sayfa
-        story.append(Paragraph("<b>4. Grafiksel Analiz</b>", alt_baslik_style))
-        story.append(Spacer(1, 0.5 * cm))
-
-        # =============================================================================
-        # GRAFİK 1: PASTA GRAFİĞİ - HEDEF PROJE DAĞILIMI
-        # =============================================================================
-
-        story.append(
-            Paragraph("<b>4.1. Hedef Proje Türleri Dağılımı</b>", normal_style)
-        )
-        story.append(Spacer(1, 0.3 * cm))
-
-        pasta_drawing = Drawing(400, 200)
-        pasta = Pie()
-        pasta.x = 100
-        pasta.y = 20
-        pasta.width = 150
-        pasta.height = 150
-
-        # Veri ve etiketler
-        pasta.data = [HEDEF_PROJELER[tur] for tur in HEDEF_PROJELER.keys()]
-        pasta.labels = [
-            f"{tur}\n({HEDEF_PROJELER[tur]})" for tur in HEDEF_PROJELER.keys()
-        ]
-
-        # Renkler
-        pasta.slices.strokeWidth = 1
-        pasta.slices.strokeColor = colors.white
-        pasta_renkleri = [
-            colors.HexColor("#4a7ba7"),  # Mavi
-            colors.HexColor("#e8743b"),  # Turuncu
-            colors.HexColor("#19a979"),  # Yeşil
-            colors.HexColor("#ed6a5a"),  # Kırmızı
-        ]
-        for i, renk in enumerate(pasta_renkleri):
-            pasta.slices[i].fillColor = renk
-
-        pasta_drawing.add(pasta)
-
-        # Legend
-        legend = Legend()
-        legend.x = 280
-        legend.y = 100
-        legend.dx = 8
-        legend.dy = 8
-        legend.fontName = "Helvetica"
-        legend.fontSize = 9
-        legend.boxAnchor = "w"
-        legend.columnMaximum = 10
-        legend.strokeWidth = 1
-        legend.strokeColor = colors.black
-        legend.deltax = 75
-        legend.deltay = 10
-        legend.autoXPadding = 5
-        legend.yGap = 0
-        legend.dxTextSpace = 5
-        legend.alignment = "right"
-        legend.dividerLines = 1 | 2 | 4
-        legend.dividerOffsY = 4.5
-        legend.subCols.rpad = 30
-
-        legend.colorNamePairs = [
-            (
-                pasta_renkleri[i],
-                f"{list(HEDEF_PROJELER.keys())[i]}: {list(HEDEF_PROJELER.values())[i]}",
-            )
-            for i in range(len(HEDEF_PROJELER))
-        ]
-
-        pasta_drawing.add(legend)
-        story.append(pasta_drawing)
-        story.append(Spacer(1, 1 * cm))
-
-        # =============================================================================
-        # GRAFİK 2: BAR GRAFİĞİ - ONAYLI PROJE KARŞILAŞTIRMASI
-        # =============================================================================
-
-        story.append(
-            Paragraph("<b>4.2. Hedef vs Onaylı Proje Karşılaştırması</b>", normal_style)
-        )
-        story.append(Spacer(1, 0.3 * cm))
-
-        bar_drawing = Drawing(700, 300)
-        bar_chart = VerticalBarChart()
-        bar_chart.x = 50
-        bar_chart.y = 50
-        bar_chart.height = 200
-        bar_chart.width = 600
-
-        # Veriler: [Hedef, Onaylı, Siemens]
-        turler = list(HEDEF_PROJELER.keys())
-        bar_chart.data = [
-            [HEDEF_PROJELER[tur] for tur in turler],  # Hedef
-            [rapor_verisi.onayli_projeler[tur] for tur in turler],  # Onaylı
-            [rapor_verisi.siemens_projeler[tur] for tur in turler],  # Siemens
-        ]
-
-        # Kategori isimleri
-        bar_chart.categoryAxis.categoryNames = turler
-        bar_chart.categoryAxis.labels.boxAnchor = "ne"
-        bar_chart.categoryAxis.labels.dx = 8
-        bar_chart.categoryAxis.labels.dy = -2
-        bar_chart.categoryAxis.labels.angle = 30
-        bar_chart.categoryAxis.labels.fontName = "Helvetica"
-        bar_chart.categoryAxis.labels.fontSize = 9
-
-        # Y ekseni
-        bar_chart.valueAxis.valueMin = 0
-        bar_chart.valueAxis.valueMax = max([HEDEF_PROJELER[tur] for tur in turler]) + 20
-        bar_chart.valueAxis.valueStep = 50
-        bar_chart.valueAxis.labels.fontName = "Helvetica"
-        bar_chart.valueAxis.labels.fontSize = 9
-
-        # Bar renkleri
-        bar_chart.bars[0].fillColor = colors.HexColor("#4a7ba7")  # Hedef - Mavi
-        bar_chart.bars[1].fillColor = colors.HexColor("#19a979")  # Onaylı - Yeşil
-        bar_chart.bars[2].fillColor = colors.HexColor("#e8743b")  # Siemens - Turuncu
-
-        # Bar stilleri
-        bar_chart.barSpacing = 2
-        bar_chart.groupSpacing = 15
-        bar_chart.barWidth = 15
-
-        bar_drawing.add(bar_chart)
-
-        # Bar chart legend
-        bar_legend = Legend()
-        bar_legend.x = 50
-        bar_legend.y = 20
-        bar_legend.dx = 8
-        bar_legend.dy = 8
-        bar_legend.fontName = "Helvetica"
-        bar_legend.fontSize = 9
-        bar_legend.boxAnchor = "sw"
-        bar_legend.columnMaximum = 1
-        bar_legend.alignment = "right"
-        bar_legend.colorNamePairs = [
-            (colors.HexColor("#4a7ba7"), "Hedef"),
-            (colors.HexColor("#19a979"), "Onaylı"),
-            (colors.HexColor("#e8743b"), "Siemens"),
-        ]
-
-        bar_drawing.add(bar_legend)
-        story.append(bar_drawing)
-        story.append(Spacer(1, 1 * cm))
-
-        # =============================================================================
-        # GRAFİK 3: YÜZDE BAR GRAFİĞİ - GERÇEKLEŞME ORANLARI
-        # =============================================================================
-
-        story.append(Paragraph("<b>4.3. Gerçekleşme Oranları (%)</b>", normal_style))
-        story.append(Spacer(1, 0.3 * cm))
-
-        oran_drawing = Drawing(700, 300)
-        oran_chart = VerticalBarChart()
-        oran_chart.x = 50
-        oran_chart.y = 50
-        oran_chart.height = 200
-        oran_chart.width = 600
-
-        # Veriler: [Siemens Dahil, Siemens Hariç]
-        oran_chart.data = [
-            [rapor_verisi.oran_siemens_dahil[tur] for tur in turler],  # Siemens Dahil
-            [rapor_verisi.oran_siemens_haric[tur] for tur in turler],  # Siemens Hariç
-        ]
-
-        # Kategori isimleri
-        oran_chart.categoryAxis.categoryNames = turler
-        oran_chart.categoryAxis.labels.boxAnchor = "ne"
-        oran_chart.categoryAxis.labels.dx = 8
-        oran_chart.categoryAxis.labels.dy = -2
-        oran_chart.categoryAxis.labels.angle = 30
-        oran_chart.categoryAxis.labels.fontName = "Helvetica"
-        oran_chart.categoryAxis.labels.fontSize = 9
-
-        # Y ekseni (0-100%)
-        oran_chart.valueAxis.valueMin = 0
-        oran_chart.valueAxis.valueMax = 100
-        oran_chart.valueAxis.valueStep = 10
-        oran_chart.valueAxis.labels.fontName = "Helvetica"
-        oran_chart.valueAxis.labels.fontSize = 9
-        oran_chart.valueAxis.labelTextFormat = "%d%%"
-
-        # Bar renkleri
-        oran_chart.bars[0].fillColor = colors.HexColor(
-            "#2c5aa0"
-        )  # Siemens Dahil - Koyu Mavi
-        oran_chart.bars[1].fillColor = colors.HexColor(
-            "#4a7ba7"
-        )  # Siemens Hariç - Açık Mavi
-
-        # Bar stilleri
-        oran_chart.barSpacing = 3
-        oran_chart.groupSpacing = 20
-        oran_chart.barWidth = 20
-
-        oran_drawing.add(oran_chart)
-
-        # Oran chart legend
-        oran_legend = Legend()
-        oran_legend.x = 50
-        oran_legend.y = 20
-        oran_legend.dx = 8
-        oran_legend.dy = 8
-        oran_legend.fontName = "Helvetica"
-        oran_legend.fontSize = 9
-        oran_legend.boxAnchor = "sw"
-        oran_legend.columnMaximum = 1
-        oran_legend.alignment = "right"
-        oran_legend.colorNamePairs = [
-            (colors.HexColor("#2c5aa0"), "Oran (Siemens Dahil)"),
-            (colors.HexColor("#4a7ba7"), "Oran (Siemens Hariç)"),
-        ]
-
-        oran_drawing.add(oran_legend)
-        story.append(oran_drawing)
-
-        # =============================================================================
-        # PDF OLUŞTUR
-        # =============================================================================
+        story.append(PageBreak())
+        _add_charts(story, rapor_verisi, alt_baslik_style, normal_style)
 
         doc.build(story)
         logger.info(f"PDF rapor oluşturuldu: {dosya_yolu}")
@@ -663,6 +259,249 @@ def rapor_pdf_olustur(rapor_verisi: RaporVerisi, dosya_yolu: str) -> bool:
     except Exception as e:
         logger.error(f"PDF oluşturma hatası: {e}", exc_info=True)
         return False
+
+
+# =============================================================================
+# PDF SECTION HELPERS
+# =============================================================================
+
+def _create_styles(styles, font_name):
+    baslik_style = ParagraphStyle(
+        "BaslikStyle", parent=styles["Heading1"],
+        fontName=font_name, fontSize=18, textColor=colors.HexColor("#1a5490"),
+        alignment=TA_CENTER, spaceAfter=12,
+    )
+    alt_baslik_style = ParagraphStyle(
+        "AltBaslikStyle", parent=styles["Heading2"],
+        fontName=font_name, fontSize=14, textColor=colors.HexColor("#2c5aa0"),
+        spaceAfter=10,
+    )
+    normal_style = styles["Normal"]
+    normal_style.fontName = font_name
+    normal_style.fontSize = 10
+    return baslik_style, alt_baslik_style, normal_style
+
+
+def _add_header(story, rapor_verisi, baslik_style, alt_baslik_style, normal_style):
+    story.append(Paragraph(f"<b>{APP_NAME}</b>", baslik_style))
+    story.append(Paragraph("Proje Onay Durum Raporu", alt_baslik_style))
+    story.append(Paragraph(f"Rapor Tarihi: {rapor_verisi.olusturma_tarihi}", normal_style))
+    story.append(Spacer(1, 0.5 * cm))
+
+
+def _base_table_style():
+    return TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c5aa0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("BACKGROUND", (0, 1), (-1, -2), colors.beige),
+        ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#4a7ba7")),
+        ("TEXTCOLOR", (0, -1), (-1, -1), colors.whitesmoke),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 1, colors.black),
+        ("LINEBELOW", (0, 0), (-1, 0), 2, colors.black),
+    ])
+
+
+def _add_target_table(story, alt_baslik_style):
+    story.append(Paragraph("<b>1. Hedef Proje Sayıları</b>", alt_baslik_style))
+    data = [["Proje Türü", "Hedef Sayı"]]
+    for tur, hedef in HEDEF_PROJELER.items():
+        data.append([tur, str(hedef)])
+    data.append(["TOPLAM", str(TOPLAM_HEDEF)])
+    style = _base_table_style()
+    style.add("FONTSIZE", (0, 0), (-1, 0), 12)
+    style.add("FONTSIZE", (0, 1), (-1, -2), 10)
+    style.add("FONTSIZE", (0, -1), (-1, -1), 11)
+    style.add("ALIGN", (0, 1), (0, -1), "LEFT")
+    style.add("ALIGN", (1, 1), (1, -1), "CENTER")
+    story.append(Table(data, colWidths=[10 * cm, 5 * cm]).setStyle(style))
+    story.append(Spacer(1, 1 * cm))
+
+
+def _add_approved_table(story, rapor_verisi, alt_baslik_style):
+    story.append(Paragraph("<b>2. Onaylı Projeler ve Gerçekleşme Oranları</b>", alt_baslik_style))
+    data = [
+        ["Proje Türü", "Hedef", "Onaylı\n(Toplam)", "Siemens",
+         "Oran\n(Siemens Dahil)", "Oran\n(Siemens Hariç)"]
+    ]
+    for tur in HEDEF_PROJELER.keys():
+        hedef = HEDEF_PROJELER[tur]
+        onayli = rapor_verisi.onayli_projeler[tur]
+        siemens = rapor_verisi.siemens_projeler[tur]
+        oran_dahil = rapor_verisi.oran_siemens_dahil[tur]
+        oran_haric = rapor_verisi.oran_siemens_haric[tur]
+        data.append([tur, str(hedef), str(onayli), str(siemens),
+                     f"%{oran_dahil:.1f}", f"%{oran_haric:.1f}"])
+    data.append([
+        "TOPLAM", str(TOPLAM_HEDEF), str(rapor_verisi.toplam_onayli),
+        str(rapor_verisi.toplam_siemens),
+        f"%{rapor_verisi.genel_oran_siemens_dahil:.1f}",
+        f"%{rapor_verisi.genel_oran_siemens_haric:.1f}",
+    ])
+    style = _base_table_style()
+    style.add("FONTSIZE", (0, 0), (-1, 0), 10)
+    style.add("VALIGN", (0, 0), (-1, 0), "MIDDLE")
+    style.add("FONTSIZE", (0, 1), (-1, -2), 9)
+    style.add("FONTSIZE", (0, -1), (-1, -1), 10)
+    style.add("ALIGN", (0, 1), (0, -1), "LEFT")
+    style.add("ALIGN", (1, 1), (-1, -1), "CENTER")
+    story.append(Table(data, colWidths=[5*cm, 3*cm, 3*cm, 3*cm, 4*cm, 4*cm]).setStyle(style))
+    story.append(Spacer(1, 1 * cm))
+
+
+def _add_summary(story, rapor_verisi, alt_baslik_style, normal_style):
+    story.append(Paragraph("<b>3. Özet Değerlendirme</b>", alt_baslik_style))
+    ozet_text = (
+        f"<b>Toplam Hedef Proje Sayısı:</b> {TOPLAM_HEDEF}<br/>"
+        f"<b>Onaylanan Toplam Proje Sayısı:</b> {rapor_verisi.toplam_onayli}<br/>"
+        f"<b>Siemens Projesi (Onaylı):</b> {rapor_verisi.toplam_siemens}<br/>"
+        f"<br/>"
+        f"<b>Genel Gerçekleşme Oranı (Siemens Dahil):</b> %{rapor_verisi.genel_oran_siemens_dahil:.1f}<br/>"
+        f"<b>Genel Gerçekleşme Oranı (Siemens Hariç):</b> %{rapor_verisi.genel_oran_siemens_haric:.1f}<br/>"
+        f"<br/>"
+        "<i>Not: Siemens projeleri, proje kodunda 'SIEMENS' veya 'SMN' içeren "
+        "ve en az bir revizyonu onaylanmış projelerdir.</i>"
+    )
+    story.append(Paragraph(ozet_text, normal_style))
+    story.append(Spacer(1, 1 * cm))
+
+
+def _add_charts(story, rapor_verisi, alt_baslik_style, normal_style):
+    story.append(Paragraph("<b>4. Grafiksel Analiz</b>", alt_baslik_style))
+    story.append(Spacer(1, 0.5 * cm))
+    _add_pie_chart(story, normal_style)
+    _add_bar_chart(story, rapor_verisi, normal_style)
+    _add_ratio_chart(story, rapor_verisi, normal_style)
+
+
+_PASTA_RENKLERI = [
+    colors.HexColor("#4a7ba7"),
+    colors.HexColor("#e8743b"),
+    colors.HexColor("#19a979"),
+    colors.HexColor("#ed6a5a"),
+]
+
+
+def _add_pie_chart(story, normal_style):
+    story.append(Paragraph("<b>4.1. Hedef Proje Türleri Dağılımı</b>", normal_style))
+    story.append(Spacer(1, 0.3 * cm))
+    drawing = Drawing(400, 200)
+    pie = Pie()
+    pie.x, pie.y, pie.width, pie.height = 100, 20, 150, 150
+    pie.data = [HEDEF_PROJELER[t] for t in HEDEF_PROJELER]
+    pie.labels = [f"{t}\n({HEDEF_PROJELER[t]})" for t in HEDEF_PROJELER]
+    pie.slices.strokeWidth = 1
+    pie.slices.strokeColor = colors.white
+    for i, renk in enumerate(_PASTA_RENKLERI):
+        pie.slices[i].fillColor = renk
+    drawing.add(pie)
+
+    legend = Legend()
+    legend.x, legend.y = 280, 100
+    legend.dx, legend.dy = 8, 8
+    legend.fontName, legend.fontSize = "Helvetica", 9
+    legend.boxAnchor, legend.columnMaximum = "w", 10
+    legend.strokeWidth, legend.strokeColor = 1, colors.black
+    legend.deltax, legend.deltay = 75, 10
+    legend.autoXPadding, legend.yGap = 5, 0
+    legend.dxTextSpace, legend.alignment = 5, "right"
+    legend.dividerLines, legend.dividerOffsY, legend.subCols.rpad = 1 | 2 | 4, 4.5, 30
+    turler = list(HEDEF_PROJELER.keys())
+    degerler = list(HEDEF_PROJELER.values())
+    legend.colorNamePairs = [
+        (_PASTA_RENKLERI[i], f"{turler[i]}: {degerler[i]}") for i in range(len(turler))
+    ]
+    drawing.add(legend)
+    story.append(drawing)
+    story.append(Spacer(1, 1 * cm))
+
+
+def _add_bar_chart(story, rapor_verisi, normal_style):
+    story.append(Paragraph("<b>4.2. Hedef vs Onaylı Proje Karşılaştırması</b>", normal_style))
+    story.append(Spacer(1, 0.3 * cm))
+    turler = list(HEDEF_PROJELER.keys())
+    drawing = Drawing(700, 300)
+    chart = VerticalBarChart()
+    chart.x, chart.y, chart.height, chart.width = 50, 50, 200, 600
+    chart.data = [
+        [HEDEF_PROJELER[t] for t in turler],
+        [rapor_verisi.onayli_projeler[t] for t in turler],
+        [rapor_verisi.siemens_projeler[t] for t in turler],
+    ]
+    _configure_category_axis(chart, turler)
+    chart.valueAxis.valueMin = 0
+    chart.valueAxis.valueMax = max(HEDEF_PROJELER.values()) + 20
+    chart.valueAxis.valueStep = 50
+    chart.valueAxis.labels.fontName = "Helvetica"
+    chart.valueAxis.labels.fontSize = 9
+    chart.bars[0].fillColor = colors.HexColor("#4a7ba7")
+    chart.bars[1].fillColor = colors.HexColor("#19a979")
+    chart.bars[2].fillColor = colors.HexColor("#e8743b")
+    chart.barSpacing, chart.groupSpacing, chart.barWidth = 2, 15, 15
+    drawing.add(chart)
+
+    legend = Legend()
+    legend.x, legend.y = 50, 20
+    legend.dx, legend.dy = 8, 8
+    legend.fontName, legend.fontSize = "Helvetica", 9
+    legend.boxAnchor, legend.columnMaximum, legend.alignment = "sw", 1, "right"
+    legend.colorNamePairs = [
+        (colors.HexColor("#4a7ba7"), "Hedef"),
+        (colors.HexColor("#19a979"), "Onaylı"),
+        (colors.HexColor("#e8743b"), "Siemens"),
+    ]
+    drawing.add(legend)
+    story.append(drawing)
+    story.append(Spacer(1, 1 * cm))
+
+
+def _add_ratio_chart(story, rapor_verisi, normal_style):
+    story.append(Paragraph("<b>4.3. Gerçekleşme Oranları (%)</b>", normal_style))
+    story.append(Spacer(1, 0.3 * cm))
+    turler = list(HEDEF_PROJELER.keys())
+    drawing = Drawing(700, 300)
+    chart = VerticalBarChart()
+    chart.x, chart.y, chart.height, chart.width = 50, 50, 200, 600
+    chart.data = [
+        [rapor_verisi.oran_siemens_dahil[t] for t in turler],
+        [rapor_verisi.oran_siemens_haric[t] for t in turler],
+    ]
+    _configure_category_axis(chart, turler)
+    chart.valueAxis.valueMin = 0
+    chart.valueAxis.valueMax = 100
+    chart.valueAxis.valueStep = 10
+    chart.valueAxis.labels.fontName = "Helvetica"
+    chart.valueAxis.labels.fontSize = 9
+    chart.valueAxis.labelTextFormat = "%d%%"
+    chart.bars[0].fillColor = colors.HexColor("#2c5aa0")
+    chart.bars[1].fillColor = colors.HexColor("#4a7ba7")
+    chart.barSpacing, chart.groupSpacing, chart.barWidth = 3, 20, 20
+    drawing.add(chart)
+
+    legend = Legend()
+    legend.x, legend.y = 50, 20
+    legend.dx, legend.dy = 8, 8
+    legend.fontName, legend.fontSize = "Helvetica", 9
+    legend.boxAnchor, legend.columnMaximum, legend.alignment = "sw", 1, "right"
+    legend.colorNamePairs = [
+        (colors.HexColor("#2c5aa0"), "Oran (Siemens Dahil)"),
+        (colors.HexColor("#4a7ba7"), "Oran (Siemens Hariç)"),
+    ]
+    drawing.add(legend)
+    story.append(drawing)
+
+
+def _configure_category_axis(chart, turler):
+    chart.categoryAxis.categoryNames = turler
+    chart.categoryAxis.labels.boxAnchor = "ne"
+    chart.categoryAxis.labels.dx = 8
+    chart.categoryAxis.labels.dy = -2
+    chart.categoryAxis.labels.angle = 30
+    chart.categoryAxis.labels.fontName = "Helvetica"
+    chart.categoryAxis.labels.fontSize = 9
 
 
 # =============================================================================
