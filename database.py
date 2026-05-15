@@ -4,18 +4,8 @@ import datetime
 import os
 from typing import Optional, Dict, List, Tuple, Any
 
-# Authentication imports
-try:
-    import bcrypt
-    BCRYPT_AVAILABLE = True
-except ImportError:
-    BCRYPT_AVAILABLE = False
-    logging.getLogger(__name__).warning(
-        "bcrypt not available - user authentication will not work. Install with: pip install bcrypt"
-    )
-
 from models import Durum, DatabaseError, ProjeModel, RevizyonModel
-from services.backup_service import BackupService
+from services.user_repository import UserRepository
 from project_types import normalize_project_type
 from utils import get_class_logger
 # CLEANUP: migration_service removed - migrations completed
@@ -46,7 +36,8 @@ class ProjeTakipDB:
         self._connection_pool = {}
 
         # Initialize Services
-        self.backup_service = BackupService(self.db_adi)
+        self.user_repo = UserRepository(self)
+        self._backup_service = None  # Lazy-initialized
         # CLEANUP: migration_service removed - migrations completed
 
         # Değişiklik takibi
@@ -59,21 +50,15 @@ class ProjeTakipDB:
 
         # Setup database
         self.tablolari_olustur()
-        # Restore migration logic to ensure backwards compatibility with old databases
-        try:
-            from services.migration_service import MigrationService
-            self.migration_service = MigrationService(self.conn)
-            self.migration_service.run_migrations()
-        except Exception as e:
-            self.logger.warning(f"Migration service error: {e}")
-
+        # Run schema/data migrations BEFORE creating indexes (migrations may add columns)
+        self.run_migrations()
         self._ensure_yazi_dokumanlari_schema()
         self._ensure_revizyonlar_metadata_schema()
         self._indeksleri_olustur()
 
         # Create initial users if needed (also re-hashes broken entries)
         try:
-            self.create_initial_users()
+            self.user_repo.create_initial_users()
         except Exception as e:
             self.logger.warning(f"Failed to create initial users: {e}")
 
@@ -81,6 +66,14 @@ class ProjeTakipDB:
     def _get_connection(self):
         """Get the main database connection"""
         return self.conn
+
+    @property
+    def backup_service(self):
+        """Lazy-initialized BackupService to avoid top-level import coupling."""
+        if self._backup_service is None:
+            from services.backup_service import BackupService
+            self._backup_service = BackupService(self.db_adi)
+        return self._backup_service
 
     def _open_connection(self, db_path: Optional[str] = None) -> sqlite3.Connection:
         path = db_path or self.db_adi
@@ -182,15 +175,7 @@ class ProjeTakipDB:
         self.cursor = self.conn.cursor()
         self._is_closed = False
         self.tablolari_olustur()
-        
-        # Restore migration logic
-        try:
-            from services.migration_service import MigrationService
-            self.migration_service = MigrationService(self.conn)
-            self.migration_service.run_migrations()
-        except Exception as e:
-            self.logger.warning(f"Migration service error during restore: {e}")
-            
+        self.run_migrations()
         self._ensure_yazi_dokumanlari_schema()
         self._ensure_revizyonlar_metadata_schema()
         self._indeksleri_olustur()
@@ -198,6 +183,15 @@ class ProjeTakipDB:
 
     def yedekleri_listele(self) -> List[Dict[str, Any]]:
         return self.backup_service.list_backups()
+
+    def run_migrations(self):
+        """Run schema and data migrations for backwards compatibility with older databases."""
+        try:
+            from services.migration_service import MigrationService
+            self.migration_service = MigrationService(self.conn)
+            self.migration_service.run_migrations()
+        except Exception as e:
+            self.logger.warning(f"Migration service error: {e}")
 
     # =============================================================================
     # CORE DATABASE METHODS
@@ -2281,129 +2275,26 @@ class ProjeTakipDB:
         return rows
 
     # =============================================================================
-    # USER AUTHENTICATION METHODS
+    # USER AUTHENTICATION METHODS (delegated to UserRepository)
     # =============================================================================
 
     def _hash_password(self, password: str) -> str:
-        """Hash a password using bcrypt."""
-        if not BCRYPT_AVAILABLE:
-            raise RuntimeError("bcrypt is not installed")
-        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        return self.user_repo.hash_password(password)
 
     def _verify_password(self, password: str, password_hash: str) -> bool:
-        """Verify a password against its hash."""
-        if not BCRYPT_AVAILABLE:
-            return False
-        try:
-            return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
-        except Exception:
-            return False
+        return self.user_repo.verify_password(password, password_hash)
 
     def create_initial_users(self):
-        """Create initial users if users table is empty, or fix broken hashes."""
-        if not BCRYPT_AVAILABLE:
-            self.logger.warning("bcrypt is not available; skipping user setup.")
-            return
-
-        initial_users = [
-            {
-                "username": "alperb.yilmaz",
-                "password": "Botas.2025",
-                "full_name": "Alper Berkan Yılmaz",
-                "role": "admin",
-            },
-            {
-                "username": "omer.erbas",
-                "password": "Botas.2025",
-                "full_name": "Ömer Erbaş",
-                "role": "admin",
-            },
-        ]
-
-        try:
-            for user_data in initial_users:
-                existing = self.get_user_by_username(user_data["username"])
-                needs_upsert = False
-
-                if existing is None:
-                    # Kullanıcı hiç yok — oluştur
-                    needs_upsert = True
-                else:
-                    # Hash geçerli mi? Boş veya bcrypt formatına uymuyorsa yenile
-                    ph = (existing.get("password_hash") or "").strip()
-                    is_valid_bcrypt = ph.startswith("$2b$") or ph.startswith("$2a$") or ph.startswith("$2y$")
-                    if not is_valid_bcrypt:
-                        self.logger.info(
-                            "Kullanıcı %s için geçersiz/eksik hash bulundu; yeniden oluşturuluyor.",
-                            user_data["username"],
-                        )
-                        needs_upsert = True
-
-                if needs_upsert:
-                    password_hash = self._hash_password(user_data["password"])
-                    with self.transaction():
-                        self.cursor.execute(
-                            """INSERT INTO users (username, password_hash, full_name, role, created_at)
-                               VALUES (?, ?, ?, ?, ?)
-                               ON CONFLICT(username) DO UPDATE SET
-                                   password_hash = excluded.password_hash,
-                                   full_name = excluded.full_name,
-                                   role = excluded.role""",
-                            (
-                                user_data["username"],
-                                password_hash,
-                                user_data["full_name"],
-                                user_data["role"],
-                                datetime.datetime.now(),
-                            ),
-                        )
-                    self.logger.info("Kullanıcı oluşturuldu/güncellendi: %s", user_data["username"])
-
-        except Exception as e:
-            self.logger.error(f"Failed to create/update initial users: {e}", exc_info=True)
-
+        return self.user_repo.create_initial_users()
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        """Get user information by username."""
-        try:
-            self.cursor.execute(
-                """SELECT id, username, password_hash, full_name, role, created_at, last_login
-                   FROM users WHERE username = ?""",
-                (username,)
-            )
-            row = self.cursor.fetchone()
-            if row:
-                return {
-                    "id": row[0],
-                    "username": row[1],
-                    "password_hash": row[2],
-                    "full_name": row[3],
-                    "role": row[4],
-                    "created_at": row[5],
-                    "last_login": row[6]
-                }
-            return None
-        except Exception as e:
-            self.logger.error(f"Failed to get user: {e}", exc_info=True)
-            return None
+        return self.user_repo.get_by_username(username)
 
     def verify_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
-        """Verify user credentials and return user info if valid."""
-        user = self.get_user_by_username(username)
-        if user and self._verify_password(password, user["password_hash"]):
-            return user
-        return None
+        return self.user_repo.verify(username, password)
 
     def update_last_login(self, user_id: int):
-        """Update the last_login timestamp for a user."""
-        try:
-            with self.transaction():
-                self.cursor.execute(
-                    "UPDATE users SET last_login = ? WHERE id = ?",
-                    (datetime.datetime.now(), user_id)
-                )
-        except Exception as e:
-            self.logger.error(f"Failed to update last login: {e}", exc_info=True)
+        return self.user_repo.update_last_login(user_id)
 
     def __del__(self):
         if hasattr(self, "conn"):
