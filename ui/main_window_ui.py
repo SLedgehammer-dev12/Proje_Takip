@@ -469,20 +469,25 @@ def _add_menu_action(self, menu, icon, text, callback, shortcut=""):
 
 def _setup_menubar(self):
     menubar = self.menuBar()
-    # Because original code uses many helper methods and actions, keep it compact
-    # The wrapper will call the original helpers for detailed actions
+    self._setup_file_menu(menubar)
+    self._setup_project_menu(menubar)
+    self._setup_revision_menu(menubar)
+    self._setup_filter_menu(menubar)
+    self._setup_view_menu(menubar)
+    self._setup_report_menu(menubar)
+    self._setup_help_menu(menubar)
+    return menubar
+
+
+def _setup_file_menu(self, menubar):
     dosya_menu = menubar.addMenu("&Dosya")
     self._add_menu_action(
-        dosya_menu,
-        "document-new",
-        "Yeni Veritabanı Oluştur...",
-        self.yeni_veritabani_olustur,
-        "Ctrl+Shift+N",
+        dosya_menu, "document-new", "Yeni Veritabanı Oluştur...",
+        self.yeni_veritabani_olustur, "Ctrl+Shift+N",
     )
     self._add_menu_action(
         dosya_menu, "document-open", "Veritabanı Aç...", self.veritabani_ac, "Ctrl+O"
     )
-    # Son kullanılan dosyalar
     self.son_dosyalar_menu = dosya_menu.addMenu(
         QIcon.fromTheme("document-open-recent"), "Son Kullanılan Dosyalar"
     )
@@ -495,31 +500,24 @@ def _setup_menubar(self):
         dosya_menu, "x-office-spreadsheet", "Excel'e Aktar", self.excele_aktar, "Ctrl+E"
     )
     self.revizyon_takip_export_action = self._add_menu_action(
-        dosya_menu,
-        "x-office-spreadsheet",
-        "Takip Listesini Excel'e Aktar...",
-        self.takip_listesini_excele_aktar,
+        dosya_menu, "x-office-spreadsheet",
+        "Takip Listesini Excel'e Aktar...", self.takip_listesini_excele_aktar,
     )
     self._add_menu_action(
         dosya_menu, "folder-new", "Projeleri Klasöre Çıkar...", self.projeleri_klasore_cikar
     )
     dosya_menu.addSeparator()
-    # Yedekleme menüsü
     yedek_menu = dosya_menu.addMenu(QIcon.fromTheme("document-save"), "Yedekleme")
     self._add_menu_action(
         yedek_menu, "document-save-as", "Manuel Yedek Al", self.manuel_yedek_al
     )
     self._add_menu_action(
-        yedek_menu,
-        "document-revert",
-        "Yedekten Geri Yükle...",
-        self.yedekten_geri_yukle_dialog,
+        yedek_menu, "document-revert", "Yedekten Geri Yükle...", self.yedekten_geri_yukle_dialog,
     )
     self._add_menu_action(
         yedek_menu, "folder-open", "Yedekleri Listele...", self.yedekleri_goster
     )
     dosya_menu.addSeparator()
-    # Güncelleme eylemleri — Dosya menüsü altında
     try:
         from PySide6.QtGui import QAction
         update_action = QAction("🔄 Güncellemeleri Kontrol Et...", self)
@@ -530,7 +528,6 @@ def _setup_menubar(self):
             pass
         self.update_action = update_action
         dosya_menu.addAction(update_action)
-
         auto_action = QAction("Başlangıçta güncellemeleri kontrol et", self)
         auto_action.setCheckable(True)
         try:
@@ -545,125 +542,88 @@ def _setup_menubar(self):
         pass
     dosya_menu.addSeparator()
     self._add_menu_action(dosya_menu, "application-exit", "Çıkış", self.close, "Ctrl+Q")
-    # Görünüm menüsü - Tema toggle eklendi
-    # Proje menüsü
+
+
+def _setup_project_menu(self, menubar):
     proje_menu = menubar.addMenu("&Proje")
     self._add_menu_action(
         proje_menu, "document-new", "Yeni Proje", self.yeni_proje_penceresi, "Ctrl+N"
     )
     self._add_menu_action(
-        proje_menu,
-        "document-open",
-        "Dosyadan Proje Oluştur...",
-        self.dosyadan_proje_olustur,
+        proje_menu, "document-open", "Dosyadan Proje Oluştur...", self.dosyadan_proje_olustur,
     )
     self._add_menu_action(
-        proje_menu,
-        "mail-forward",
-        "Gelen Yazıdan Proje Oluştur...",
+        proje_menu, "mail-forward", "Gelen Yazıdan Proje Oluştur...",
         self.gelen_yazidan_coklu_proje_olustur,
     )
     self._add_menu_action(
-        proje_menu,
-        "mail-send",
-        "Giden Yazıdan Proje Oluştur...",
+        proje_menu, "mail-send", "Giden Yazıdan Proje Oluştur...",
         self.giden_yazidan_coklu_proje_olustur,
     )
     proje_menu.addSeparator()
     self.proje_duzenle_action = self._add_menu_action(
-        proje_menu,
-        "document-edit",
-        "Seçili Projeyi Düzenle...",
-        self.proje_duzenleme_penceresi,
+        proje_menu, "document-edit", "Seçili Projeyi Düzenle...", self.proje_duzenleme_penceresi,
     )
     self.proje_sil_action = self._add_menu_action(
         proje_menu, "edit-delete", "Seçili Projeyi Sil", self.arayuzden_projeyi_sil
     )
     proje_menu.addSeparator()
     self.proje_toplu_gelen_action = self._add_menu_action(
-        proje_menu,
-        "mail-receive",
-        "Seçili Projelere Toplu Gelen Yazı Ekle...",
+        proje_menu, "mail-receive", "Seçili Projelere Toplu Gelen Yazı Ekle...",
         lambda: self._secili_projelere_yazi_ekle("Gelen"),
     )
     self.proje_toplu_onay_action = self._add_menu_action(
-        proje_menu,
-        "mail-signed-verified",
-        "Seçili Projelere Toplu Onay Yazısı Ekle...",
+        proje_menu, "mail-signed-verified", "Seçili Projelere Toplu Onay Yazısı Ekle...",
         lambda: self._secili_projelere_yazi_ekle("Onay"),
     )
     self.proje_toplu_notlu_action = self._add_menu_action(
-        proje_menu,
-        "emblem-favorite",
-        "Seçili Projelere Toplu Notlu Onay Yazısı Ekle...",
+        proje_menu, "emblem-favorite", "Seçili Projelere Toplu Notlu Onay Yazısı Ekle...",
         lambda: self._secili_projelere_yazi_ekle("Notlu Onay"),
     )
     self.proje_toplu_red_action = self._add_menu_action(
-        proje_menu,
-        "mail-mark-junk",
-        "Seçili Projelere Toplu Red Yazısı Ekle...",
+        proje_menu, "mail-mark-junk", "Seçili Projelere Toplu Red Yazısı Ekle...",
         lambda: self._secili_projelere_yazi_ekle("Red"),
     )
 
-    # Revizyon menüsü
+
+def _setup_revision_menu(self, menubar):
     revizyon_menu = menubar.addMenu("&Revizyon")
     self._add_menu_action(
-        revizyon_menu,
-        "list-add",
-        "Yeni Revizyon Yükle...",
-        self.yeni_revizyon_yukle,
-        "Ctrl+Shift+R",
+        revizyon_menu, "list-add", "Yeni Revizyon Yükle...",
+        self.yeni_revizyon_yukle, "Ctrl+Shift+R",
     )
     self.revizyon_duzenle_action = self._add_menu_action(
-        revizyon_menu,
-        "document-edit",
-        "Seçili Revizyonu Düzenle...",
-        self.arayuzden_revizyonu_duzenle,
-        "Ctrl+D",
+        revizyon_menu, "document-edit", "Seçili Revizyonu Düzenle...",
+        self.arayuzden_revizyonu_duzenle, "Ctrl+D",
     )
     self.revizyon_sil_action = self._add_menu_action(
-        revizyon_menu,
-        "edit-delete",
-        "Seçili Revizyonu Sil...",
-        self.arayuzden_revizyonu_sil,
-        "Delete",
+        revizyon_menu, "edit-delete", "Seçili Revizyonu Sil...",
+        self.arayuzden_revizyonu_sil, "Delete",
     )
     revizyon_menu.addSeparator()
     self._add_menu_action(
-        revizyon_menu,
-        "dialog-ok-apply",
-        "Revizyonu Onayla...",
+        revizyon_menu, "dialog-ok-apply", "Revizyonu Onayla...",
         lambda: self._revizyon_islem_baslat("Onay"),
     )
     self._add_menu_action(
-        revizyon_menu,
-        "emblem-favorite",
-        "Revizyonu Notlu Onayla...",
+        revizyon_menu, "emblem-favorite", "Revizyonu Notlu Onayla...",
         lambda: self._revizyon_islem_baslat("Notlu Onay"),
     )
     self._add_menu_action(
-        revizyon_menu,
-        "dialog-cancel",
-        "Revizyonu Reddet...",
+        revizyon_menu, "dialog-cancel", "Revizyonu Reddet...",
         lambda: self._revizyon_islem_baslat("Red"),
     )
     self._add_menu_action(
-        revizyon_menu,
-        "system-run",
-        "Revizyon Durumunu Düzelt...",
+        revizyon_menu, "system-run", "Revizyon Durumunu Düzelt...",
         self.revizyon_durumunu_degistir,
     )
     revizyon_menu.addSeparator()
     self.revizyon_takip_notu_action = self._add_menu_action(
-        revizyon_menu,
-        "edit-rename",
-        "Takip Notu Ekle/Güncelle...",
+        revizyon_menu, "edit-rename", "Takip Notu Ekle/Güncelle...",
         self.revizyon_takip_notu_ekle_duzenle,
     )
     self.revizyon_takip_kaldir_action = self._add_menu_action(
-        revizyon_menu,
-        "edit-clear",
-        "Takip İşaretini Kaldır",
+        revizyon_menu, "edit-clear", "Takip İşaretini Kaldır",
         self.revizyon_takip_kaldir,
     )
     from PySide6.QtGui import QAction
@@ -684,25 +644,22 @@ def _setup_menubar(self):
         indir_menu, "mail-attachment", "Gelen Yazı Dokümanı", self.gelen_yaziyi_indir
     )
     self.onay_red_yazi_indir_action = self._add_menu_action(
-        indir_menu,
-        "mail-signed",
-        "Onay/Red Yazı Dokümanı",
-        self.onay_red_yazisini_indir,
+        indir_menu, "mail-signed", "Onay/Red Yazı Dokümanı", self.onay_red_yazisini_indir,
     )
-    # Filtre menüsü
+
+
+def _setup_filter_menu(self, menubar):
     filtre_menu = menubar.addMenu("&Filtre")
     self._add_menu_action(
-        filtre_menu,
-        "view-filter",
-        "Gelişmiş Filtreleme...",
-        self.show_advanced_filters,
-        "Ctrl+Shift+F",
+        filtre_menu, "view-filter", "Gelişmiş Filtreleme...",
+        self.show_advanced_filters, "Ctrl+Shift+F",
     )
     self._add_menu_action(
         filtre_menu, "edit-clear", "Filtreleri Temizle", self.clear_filters
     )
 
-    # Görünüm menüsü - Tema toggle eklendi
+
+def _setup_view_menu(self, menubar):
     gorunum_menu = menubar.addMenu("&Görünüm")
     yenile_action = self._add_menu_action(
         gorunum_menu, "view-refresh", "Yenile", self.yenile
@@ -715,38 +672,32 @@ def _setup_menubar(self):
         gorunum_menu, "", "Arama Kutusuna Odaklan", self.focus_search, "Ctrl+F"
     )
     try:
-        # Use a QAction for toggling contrast
-        from PySide6.QtGui import QAction
-
+        from PySide6.QtGui import QAction, QActionGroup
         performance_action = QAction("Performans Modu", self)
         performance_action.setCheckable(True)
         performance_action.setChecked(
             bool(getattr(self, "is_performance_mode_enabled", lambda: False)())
         )
-
         def _toggle_performance_mode(checked):
             try:
                 self.set_performance_mode_enabled(bool(checked))
             except Exception:
                 pass
-
         performance_action.triggered.connect(_toggle_performance_mode)
         self.performance_mode_action = performance_action
         gorunum_menu.addAction(performance_action)
 
         toggle_action = QAction("Düşük Kontrast", self)
         toggle_action.setCheckable(True)
-
         def _toggle(checked):
             try:
-                self.toggle_contrast()  # method must be provided on AnaPencere
+                self.toggle_contrast()
             except Exception:
                 pass
-
         toggle_action.triggered.connect(_toggle)
         gorunum_menu.addAction(toggle_action)
-        from ui.styles import get_available_tok_variants, get_tok_variant_meta
 
+        from ui.styles import get_available_tok_variants, get_tok_variant_meta
         initial_meta = get_tok_variant_meta(getattr(self, "_tok_variant", "light"))
         tok_action = QAction(f"Tema: {initial_meta['label']}", self)
         tok_action.setIcon(QIcon.fromTheme(initial_meta.get("icon", "")))
@@ -755,8 +706,7 @@ def _setup_menubar(self):
         gorunum_menu.addAction(tok_action)
 
         theme_menu = gorunum_menu.addMenu(
-            QIcon.fromTheme("preferences-desktop-theme"),
-            "TOK Temalari",
+            QIcon.fromTheme("preferences-desktop-theme"), "TOK Temalari",
         )
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
@@ -765,27 +715,24 @@ def _setup_menubar(self):
             action = QAction(meta["label"], self)
             action.setCheckable(True)
             action.setIcon(QIcon.fromTheme(meta.get("icon", "")))
-
             def _apply_theme(checked, variant=meta["key"]):
                 if checked:
                     try:
                         self.set_tok_theme_variant(variant)
                     except Exception:
                         pass
-
             action.triggered.connect(_apply_theme)
             theme_group.addAction(action)
             theme_menu.addAction(action)
             self.tok_theme_actions[meta["key"]] = action
-
         self.tok_theme_action_group = theme_group
         try:
             self._refresh_tok_theme_actions()
         except Exception:
             pass
+
         language_menu = gorunum_menu.addMenu(
-            QIcon.fromTheme("preferences-desktop-locale"),
-            "Dil",
+            QIcon.fromTheme("preferences-desktop-locale"), "Dil",
         )
         language_group = QActionGroup(self)
         language_group.setExclusive(True)
@@ -793,19 +740,16 @@ def _setup_menubar(self):
         for language_code, label in (("tr", "Türkçe"), ("en", "English")):
             action = QAction(label, self)
             action.setCheckable(True)
-
             def _apply_language(checked, lang=language_code):
                 if checked:
                     try:
                         self.set_app_language(lang)
                     except Exception:
                         pass
-
             action.triggered.connect(_apply_language)
             language_group.addAction(action)
             language_menu.addAction(action)
             self.language_actions[language_code] = action
-
         self.language_action_group = language_group
         try:
             active_language = get_current_language()
@@ -813,39 +757,33 @@ def _setup_menubar(self):
                 self.language_actions[active_language].setChecked(True)
         except Exception:
             pass
-        # Add a reset layout action
+
         reset_action = QAction("Düzeni Sıfırla", self)
         reset_action.triggered.connect(
             lambda: getattr(self, "_reset_layout", lambda: None)()
         )
         gorunum_menu.addAction(reset_action)
-        # Güncelleme eylemleri Dosya menüsüne taşındı
     except Exception:
         pass
-    # Rapor menüsü
+
+
+def _setup_report_menu(self, menubar):
     rapor_menu = menubar.addMenu("&Rapor")
     self._add_menu_action(
-        rapor_menu,
-        "x-office-document",
-        "Proje Durum Raporu Oluştur...",
-        self.rapor_olustur,
-        "Ctrl+Shift+P",
+        rapor_menu, "x-office-document", "Proje Durum Raporu Oluştur...",
+        self.rapor_olustur, "Ctrl+Shift+P",
     )
 
-    # Yardım menüsü
+
+def _setup_help_menu(self, menubar):
     yardim_menu = menubar.addMenu("&Yardım")
     self._add_menu_action(
-        yardim_menu,
-        "help-contents",
-        "Kullanım Kılavuzu",
-        self.show_user_guide_tab,
-        "F1",
+        yardim_menu, "help-contents", "Kullanım Kılavuzu",
+        self.show_user_guide_tab, "F1",
     )
     self._add_menu_action(
         yardim_menu, "help-about", "Sürüm Bilgisi", self.show_version_info
     )
-
-    return menubar
 
 
 def show_user_guide_tab(self):
@@ -874,5 +812,12 @@ __all__ = [
     "_setup_rapor_paneli",
     "_add_menu_action",
     "_setup_menubar",
+    "_setup_file_menu",
+    "_setup_project_menu",
+    "_setup_revision_menu",
+    "_setup_filter_menu",
+    "_setup_view_menu",
+    "_setup_report_menu",
+    "_setup_help_menu",
     "show_user_guide_tab",
 ]
