@@ -138,6 +138,9 @@ def _setup_projeler_panel(self):
     # Add search bar from ProjectPanel
     layout.addWidget(self.arama_kutusu.parent())  # Add the whole search layout
 
+    # Connect live search signal (critical for search-as-you-type)
+    self.arama_kutusu.textChanged.connect(self._on_search_text_changed)
+
     # Create tab widget
     self.sekme_widget = QTabWidget()
     layout.addWidget(self.sekme_widget)
@@ -581,25 +584,25 @@ def _setup_menubar(self):
         proje_menu,
         "mail-receive",
         "Seçili Projelere Toplu Gelen Yazı Ekle...",
-        lambda: self._toplu_yazi_islem_baslat("Gelen"),
+        lambda: self._secili_projelere_yazi_ekle("Gelen"),
     )
     self.proje_toplu_onay_action = self._add_menu_action(
         proje_menu,
         "mail-signed-verified",
         "Seçili Projelere Toplu Onay Yazısı Ekle...",
-        lambda: self._toplu_yazi_islem_baslat("Onay"),
+        lambda: self._secili_projelere_yazi_ekle("Onay"),
     )
     self.proje_toplu_notlu_action = self._add_menu_action(
         proje_menu,
         "emblem-favorite",
         "Seçili Projelere Toplu Notlu Onay Yazısı Ekle...",
-        lambda: self._toplu_yazi_islem_baslat("Notlu Onay"),
+        lambda: self._secili_projelere_yazi_ekle("Notlu Onay"),
     )
     self.proje_toplu_red_action = self._add_menu_action(
         proje_menu,
         "mail-mark-junk",
         "Seçili Projelere Toplu Red Yazısı Ekle...",
-        lambda: self._toplu_yazi_islem_baslat("Red"),
+        lambda: self._secili_projelere_yazi_ekle("Red"),
     )
 
     # Revizyon menüsü

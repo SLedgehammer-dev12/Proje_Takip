@@ -55,16 +55,17 @@ class ProjeTakipDB:
 
         # Setup database
         self.tablolari_olustur()
+        # Restore migration logic to ensure backwards compatibility with old databases
+        try:
+            from services.migration_service import MigrationService
+            self.migration_service = MigrationService(self.conn)
+            self.migration_service.run_migrations()
+        except Exception as e:
+            self.logger.warning(f"Migration service error: {e}")
+
         self._ensure_yazi_dokumanlari_schema()
         self._ensure_revizyonlar_metadata_schema()
         self._indeksleri_olustur()
-
-        # CLEANUP: migration run removed - migrations completed
-        # Note: If you need to migrate an old database, restore migration_service.py
-        # from Archive/migration/ and uncomment the following lines:
-        # from services.migration_service import MigrationService
-        # self.migration_service = MigrationService(self.conn)
-        # self.migration_service.run_migrations()
 
         # Create initial users if needed (also re-hashes broken entries)
         try:
@@ -177,6 +178,15 @@ class ProjeTakipDB:
         self.cursor = self.conn.cursor()
         self._is_closed = False
         self.tablolari_olustur()
+        
+        # Restore migration logic
+        try:
+            from services.migration_service import MigrationService
+            self.migration_service = MigrationService(self.conn)
+            self.migration_service.run_migrations()
+        except Exception as e:
+            self.logger.warning(f"Migration service error during restore: {e}")
+            
         self._ensure_yazi_dokumanlari_schema()
         self._ensure_revizyonlar_metadata_schema()
         self._indeksleri_olustur()
@@ -1040,9 +1050,9 @@ class ProjeTakipDB:
         )
         return revizyon_id, yeni_durum
 
-    def projeleri_listele(self) -> List[ProjeModel]:
+    def projeleri_listele(self, sort_by: str = "id_desc") -> List[ProjeModel]:
         # PERFORMANCE: Check cache first
-        cache_key = "projeleri_listele"
+        cache_key = f"projeleri_listele_{sort_by}"
         if self._cache_enabled and cache_key in self._query_cache:
             cached_data, cached_time = self._query_cache[cache_key]
             # Cache valid for 120 seconds
@@ -1051,6 +1061,21 @@ class ProjeTakipDB:
                 self.logger.debug("projeleri_listele: returning cached result")
                 return cached_data
         
+        # Siralama mantigi
+        sort_mapping = {
+            "id_desc": "p.id DESC",
+            "id_asc": "p.id ASC",
+            "kod_asc": "p.proje_kodu ASC",
+            "kod_desc": "p.proje_kodu DESC",
+            "isim_asc": "p.proje_ismi ASC",
+            "isim_desc": "p.proje_ismi DESC",
+            "tarih_desc": "r.gelen_yazi_tarih DESC, p.id DESC",
+            "tarih_asc": "r.gelen_yazi_tarih ASC, p.id ASC",
+            "tur_asc": "p.proje_turu ASC, p.proje_kodu ASC",
+            "tur_desc": "p.proje_turu DESC, p.proje_kodu DESC",
+        }
+        order_clause = sort_mapping.get(sort_by, "p.id DESC")
+
         sorgu = f"""
         WITH SonRevizyon AS (
             SELECT *,
@@ -1071,7 +1096,7 @@ class ProjeTakipDB:
             EXISTS(SELECT 1 FROM revizyonlar r2 WHERE r2.proje_id = p.id AND r2.is_flagged = 1) as is_flagged
         FROM projeler p
         LEFT JOIN SonRevizyon r ON p.id = r.proje_id AND r.rn = 1
-        ORDER BY p.id DESC
+        ORDER BY {order_clause}
         """
         self.cursor.execute(sorgu)
         result = [ProjeModel(*row) for row in self.cursor.fetchall()]
@@ -1812,9 +1837,26 @@ class ProjeTakipDB:
                     (flag_val, revizyon_id),
                 )
             self.logger.info(f"Revizyon flag durumu güncellendi: ID={revizyon_id}, Flag={flag_val}")
+            self._clear_query_cache()
             return True
         except Exception as e:
             self.logger.error(f"Revizyon flag güncelleme hatası: {e}")
+            return False
+
+    def proje_flag_durumu_guncelle(self, proje_id: int, is_flagged: bool) -> bool:
+        """Projenin tüm revizyonlarının hatalı kayıt (flag) durumunu günceller."""
+        try:
+            flag_val = 1 if is_flagged else 0
+            with self.transaction():
+                self.cursor.execute(
+                    "UPDATE revizyonlar SET is_flagged = ? WHERE proje_id = ?",
+                    (flag_val, proje_id),
+                )
+            self.logger.info(f"Proje flag durumu güncellendi: Proje ID={proje_id}, Flag={flag_val}, Satır={self.cursor.rowcount}")
+            self._clear_query_cache()
+            return True
+        except Exception as e:
+            self.logger.error(f"Proje flag güncelleme hatası: {e}")
             return False
 
     def revizyonu_sil(self, revizyon_id: int) -> bool:

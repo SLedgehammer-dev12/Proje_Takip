@@ -177,6 +177,7 @@ class AnaPencere(QMainWindow):
         # Guard flag used when we clear filters programmatically to avoid re-entrancy
         self._clearing_filters = False
         self._sadece_takipteki_revizyonlar = False
+        self.current_project_sort = "id_desc"
 
         # Otomatik kayıt mekanizması
         self._degisiklik_sayaci = 0
@@ -860,11 +861,11 @@ class AnaPencere(QMainWindow):
                 projects = None
                 try:
                     if getattr(self, 'filter_manager', None) and len(getattr(self.filter_manager, 'active_filters', [])):
-                        projects = self.filter_manager.get_filtered_projects()
+                        projects = self.filter_manager.get_filtered_projects(sort_by=self.current_project_sort)
                     else:
-                        projects = self.db.projeleri_listele()
+                        projects = self.db.projeleri_listele(sort_by=self.current_project_sort)
                 except Exception:
-                    projects = self.db.projeleri_listele()
+                    projects = self.db.projeleri_listele(sort_by=self.current_project_sort)
 
                 # If we need to preserve a project that is not in the list, fetch it and append.
                 try:
@@ -943,7 +944,7 @@ class AnaPencere(QMainWindow):
         """Yeni bir QThread üzerinde projeleri getir."""
         try:
             thread = QThread(self)
-            worker = DataLoadWorker(self.current_db_file, "projects", token)
+            worker = DataLoadWorker(self.current_db_file, "projects", token, sort_by=self.current_project_sort)
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
             worker.projects_loaded.connect(self._on_projects_loaded)
@@ -957,7 +958,7 @@ class AnaPencere(QMainWindow):
         except Exception as e:
             self.logger.error(f"Async project load başlatılamadı: {e}", exc_info=True)
             # fallback senkron
-            projects = self.db.projeleri_listele()
+            projects = self.db.projeleri_listele(sort_by=self.current_project_sort)
             self._on_projects_loaded(token, projects)
 
     def _on_projects_loaded(self, token: int, projects):
@@ -971,7 +972,7 @@ class AnaPencere(QMainWindow):
             if not self.tum_projeler:
                 try:
                     self.logger.warning("Async proje yükleme 0 döndü; senkron fallback başlatılıyor.")
-                    self.tum_projeler = self.db.projeleri_listele() or []
+                    self.tum_projeler = self.db.projeleri_listele(sort_by=self.current_project_sort) or []
                 except Exception as e_diag:
                     self.logger.error(f"Projeleri senkron fallback ile okuma hatası: {e_diag}", exc_info=True)
 
@@ -1094,10 +1095,10 @@ class AnaPencere(QMainWindow):
             try:
                 backup_service = self.db.backup_service
                 if backup_service.has_recent_backup(
-                    max_age_hours=24, description_prefix="Acilis"
+                    max_age_hours=4, description_prefix="Acilis"
                 ):
                     self.logger.info(
-                        "Son 24 saatte acilis yedegi mevcut; yeni acilis yedegi atlandi."
+                        "Son 4 saatte acilis yedegi mevcut; yeni acilis yedegi atlandi."
                     )
                     return
                 self._start_startup_backup_worker()
@@ -1309,6 +1310,7 @@ class AnaPencere(QMainWindow):
         from ui.main_window_ui import setup_ui as _ui_setup
 
         _ui_setup(self)
+        self.project_panel.sort_changed.connect(self._on_project_sort_changed)
         self._apply_runtime_performance_mode()
         self._refresh_performance_mode_action()
         # Status bar for professional app feedback
@@ -1340,14 +1342,8 @@ class AnaPencere(QMainWindow):
 
         # Watermark overlay (center, thin)
         try:
-            if False and ENABLE_WATERMARK:
-                self._watermark = WatermarkOverlay(
-                    parent=self.ana_widget,
-                    image_path=WATERMARK_IMAGE_PATH,
-                    opacity=WATERMARK_OPACITY,
-                )
-                self._watermark.setGeometry(self.ana_widget.rect())
-                self._watermark.raise_()
+            if False: # ENABLE_WATERMARK is undefined, disabled for now.
+                pass
         except Exception as e:
             # Watermark failing should not break the UI
             self.logger.warning(f"Filigran yüklenemedi: {e}")
@@ -1363,6 +1359,11 @@ class AnaPencere(QMainWindow):
         self.sekme_widget.currentChanged.connect(self._on_ana_sekme_degisti)
         self.proje_agaci_widget.customContextMenuRequested.connect(
             self._kategori_gorunumu_context_menu
+        )
+        # Proje listesi sağ-tık menüsü
+        self.proje_listesi_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.proje_listesi_widget.customContextMenuRequested.connect(
+            self._proje_listesi_context_menu
         )
         # Event filter'ı sadece gerekli widget'lara uygula (tüm pencere yerine)
         self.proje_listesi_widget.installEventFilter(self)
@@ -2170,6 +2171,7 @@ class AnaPencere(QMainWindow):
             meta = get_tok_variant_meta(applied_variant)
             self.logger.info("Tema degistirildi: %s", meta.get("label", applied_variant))
             self._refresh_tok_theme_actions()
+            self._invalidate_filter_cache_and_reload()
         except Exception as e:
             self.logger.warning(f"TOK tema değiştirme hatası: {e}")
 
@@ -2185,6 +2187,7 @@ class AnaPencere(QMainWindow):
             meta = get_tok_variant_meta(applied_variant)
             self.logger.info("Tema secildi: %s", meta.get("label", applied_variant))
             self._refresh_tok_theme_actions()
+            self._invalidate_filter_cache_and_reload()
         except Exception as e:
             self.logger.warning(f"Tema secme hatasi: {e}")
 
@@ -2208,8 +2211,13 @@ class AnaPencere(QMainWindow):
                     self.tok_action.setIcon(QIcon.fromTheme(meta.get("icon", "")))
                 except Exception:
                     pass
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"Theme actions refresh failed: {e}")
+    def _on_project_sort_changed(self, sort_key: str):
+        """Sıralama tercihi değiştiğinde çağrılır."""
+        self.current_project_sort = sort_key
+        # Seçili projeyi koruyarak listeyi yenile
+        self._invalidate_filter_cache_and_reload()
 
     # =============================================================================
     # SÜRÜKLE-BIRAK SLOTU (ADIM 4.3 GÜNCELLEMESİ)
@@ -3155,7 +3163,7 @@ class AnaPencere(QMainWindow):
     def apply_filters(self):
         """Aktif filtreleri uygula"""
         try:
-            filtered_projects = self.filter_manager.get_filtered_projects()
+            filtered_projects = self.filter_manager.get_filtered_projects(sort_by=self.current_project_sort)
             self.display_filtered_projects(filtered_projects)
             self.update_filter_indicator()
             self.guncelle_gosterge_panelini()
@@ -3170,13 +3178,26 @@ class AnaPencere(QMainWindow):
             )
 
     def display_filtered_projects(self, projects: List[ProjeModel]):
-        """Filtrelenmiş projeleri göster"""
-        # Set current project pool and populate UI according to current search/filter
+        """Filtrelenmiş projeleri göster.
+
+        Bu metod self.tum_projeler'i günceller.
+        Arama kutusu filtresi bu listenin üzerine uygulanır.
+        """
         self.tum_projeler = projects
-        # Apply any search box filter on top
-        self.projeleri_filtrele(
-            self.arama_kutusu.text() if hasattr(self, "arama_kutusu") else None
-        )
+        
+        # Apply any search box filter ON TOP of the incoming filtered list
+        sorgu = (self.arama_kutusu.text() if hasattr(self, "arama_kutusu") else "").strip().lower()
+        if sorgu:
+            filtered_by_search = []
+            for p in projects:
+                kod = (getattr(p, "proje_kodu", "") or "").lower()
+                isim = (getattr(p, "proje_ismi", "") or "").lower()
+                hiy = (getattr(p, "hiyerarsi", "") or "").lower()
+                if sorgu in kod or sorgu in isim or sorgu in hiy:
+                    filtered_by_search.append(p)
+        else:
+            filtered_by_search = projects
+        self._populate_projects_ui(filtered_by_search)
 
     def update_filter_indicator(self):
         """Filtre göstergesini güncelle"""
@@ -3747,7 +3768,7 @@ class AnaPencere(QMainWindow):
         return gosterilmeli
 
     def _revizyon_context_menu(self, position):
-        """Revizyon ağacı için sağ-tık menüsü."""
+        """Revizyon ağacı için sağ-tık menüsü — Revizyon menüsü seçeneklerini içerir."""
         item = self.revizyon_agaci.itemAt(position)
         if not item:
             return
@@ -3758,30 +3779,82 @@ class AnaPencere(QMainWindow):
 
         menu = QMenu(self)
 
-        # Yeni Eklenen "Yazıyı Görüntüle" Aksiyonu
+        # === Revizyon İşlemleri (menüdeki seçenekler) ===
+        yeni_rev_action = menu.addAction("➕ Yeni Revizyon Yükle...")
+        duzenle_action = menu.addAction("✏️ Seçili Revizyonu Düzenle...")
+        sil_action = menu.addAction("🗑️ Seçili Revizyonu Sil...")
+        menu.addSeparator()
+
+        onay_action = menu.addAction("✅ Revizyonu Onayla...")
+        notlu_onay_action = menu.addAction("⭐ Revizyonu Notlu Onayla...")
+        red_action = menu.addAction("❌ Revizyonu Reddet...")
+        durum_duzelt_action = menu.addAction("🔧 Revizyon Durumunu Düzelt...")
+        menu.addSeparator()
+
+        # Yazı / Takip / Flag işlemleri
         view_letter_action = menu.addAction("\U0001f4c4 Yaz\u0131y\u0131 G\u00f6r\u00fcnt\u00fcle")
         has_letter = bool(self._build_letter_payload_for_revision(rev))
         view_letter_action.setEnabled(has_letter)
         menu.addSeparator()
 
-        takip_action = menu.addAction("Takip Notu Ekle/G\u00fcncelle...")
-        takip_kaldir_action = menu.addAction("Takibi Kald\u0131r")
+        takip_action = menu.addAction("📝 Takip Notu Ekle/Güncelle...")
+        takip_kaldir_action = menu.addAction("🚫 Takibi Kaldır")
         takip_kaldir_action.setEnabled(
             int(getattr(rev, "takipte_mi", 0) or 0) == 1
         )
+        takip_filtre_action = menu.addAction("🔎 Sadece Takipteki Revizyonları Göster")
+        takip_filtre_action.setCheckable(True)
+        try:
+            takip_filtre_action.setChecked(self.sadece_takipteki_revizyonlar_action.isChecked())
+        except Exception:
+            pass
         menu.addSeparator()
+
+        # İndirme alt menüsü
+        indir_menu = menu.addMenu("⬇️ İndir")
+        indir_rev_action = indir_menu.addAction("📄 Revizyon Dokümanı")
+        indir_gelen_action = indir_menu.addAction("📨 Gelen Yazı Dokümanı")
+        indir_onay_red_action = indir_menu.addAction("📧 Onay/Red Yazı Dokümanı")
+        menu.addSeparator()
+
         is_flagged = int(getattr(rev, "is_flagged", 0) or 0)
         flag_text = "🚩 Hatalı Kayıt İşaretini Kaldır" if is_flagged else "🚩 Hatalı Kayıt Olarak İşaretle"
         flag_action = menu.addAction(flag_text)
 
         secim = menu.exec(self.revizyon_agaci.viewport().mapToGlobal(position))
-        
-        if secim == view_letter_action:
+
+        if secim == yeni_rev_action:
+            self.yeni_revizyon_yukle()
+        elif secim == duzenle_action:
+            self.arayuzden_revizyonu_duzenle()
+        elif secim == sil_action:
+            self.arayuzden_revizyonu_sil()
+        elif secim == onay_action:
+            self._revizyon_islem_baslat("Onay")
+        elif secim == notlu_onay_action:
+            self._revizyon_islem_baslat("Notlu Onay")
+        elif secim == red_action:
+            self._revizyon_islem_baslat("Red")
+        elif secim == durum_duzelt_action:
+            self.revizyon_durumunu_degistir()
+        elif secim == view_letter_action:
             self._on_view_letter_from_revision(rev)
         elif secim == takip_action:
             self.revizyon_takip_notu_ekle_duzenle()
         elif secim == takip_kaldir_action:
             self.revizyon_takip_kaldir()
+        elif secim == takip_filtre_action:
+            try:
+                self.revizyon_takip_filtresini_degistir(takip_filtre_action.isChecked())
+                self.sadece_takipteki_revizyonlar_action.setChecked(takip_filtre_action.isChecked())
+            except Exception:
+                pass
+        elif secim == indir_rev_action:
+            self.dokumani_indir()
+        elif secim == indir_gelen_action:
+            self.gelen_yaziyi_indir()
+        elif secim == indir_onay_red_action:
+            self.onay_red_yazisini_indir()
         elif secim == flag_action:
             # Toggle flag
             success = self.db.revizyon_flag_durumu_guncelle(rev.id, not bool(is_flagged))
@@ -3833,6 +3906,54 @@ class AnaPencere(QMainWindow):
             menu.addAction(sil_action)
 
         menu.exec(self.proje_agaci_widget.viewport().mapToGlobal(position))
+
+    def _proje_listesi_context_menu(self, position):
+        """Proje listesi (liste görünümü) için sağ-tık menüsü."""
+        item = self.proje_listesi_widget.itemAt(position)
+        proje = None
+        if item:
+            proje = item.data(Qt.UserRole)
+            self.proje_listesi_widget.setCurrentItem(item)
+
+        menu = QMenu(self)
+
+        # === Proje İşlemleri (menüdeki seçenekler) ===
+        menu.addAction("➕ Yeni Proje", self.yeni_proje_penceresi)
+        menu.addAction("📂 Dosyadan Proje Oluştur...", self.dosyadan_proje_olustur)
+        menu.addAction("📥 Gelen Yazıdan Proje Oluştur...", self.gelen_yazidan_coklu_proje_olustur)
+        menu.addAction("📤 Giden Yazıdan Proje Oluştur...", self.giden_yazidan_coklu_proje_olustur)
+        menu.addSeparator()
+
+        if proje:
+            duzenle_action = menu.addAction("✏️ Seçili Projeyi Düzenle...")
+            duzenle_action.triggered.connect(self.proje_duzenleme_penceresi)
+            sil_action = menu.addAction("🗑️ Seçili Projeyi Sil...")
+            sil_action.triggered.connect(self.arayuzden_projeyi_sil)
+            menu.addSeparator()
+
+            # Toplu yazı ekleme
+            menu.addAction("📥 Toplu Gelen Yazı Ekle...", lambda: self._secili_projelere_yazi_ekle("Gelen"))
+            menu.addAction("✅ Toplu Onay Yazısı Ekle...", lambda: self._secili_projelere_yazi_ekle("Onay"))
+            menu.addAction("⭐ Toplu Notlu Onay Yazısı Ekle...", lambda: self._secili_projelere_yazi_ekle("Notlu Onay"))
+            menu.addAction("❌ Toplu Red Yazısı Ekle...", lambda: self._secili_projelere_yazi_ekle("Red"))
+            # Red Flag yönetimi (her projede göster; işaretli ise kaldır, değilse ekle)
+            is_flagged = int(getattr(proje, "is_flagged", 0) or 0)
+            if is_flagged:
+                def _clear_project_flag(pid=proje.id):
+                    if self.db.proje_flag_durumu_guncelle(pid, False):
+                        self._invalidate_filter_cache_and_reload(keep_project_id=pid)
+                        self.logger.info(f"Proje {pid} red flag kaldırıldı.")
+                flag_action = menu.addAction("🚩 Red Flag İşaretini Kaldır")
+                flag_action.triggered.connect(_clear_project_flag)
+            else:
+                def _set_project_flag(pid=proje.id):
+                    if self.db.proje_flag_durumu_guncelle(pid, True):
+                        self._invalidate_filter_cache_and_reload(keep_project_id=pid)
+                        self.logger.info(f"Proje {pid} red flag olarak işaretlendi.")
+                flag_action = menu.addAction("🚩 Hatalı Kayıt Olarak İşaretle")
+                flag_action.triggered.connect(_set_project_flag)
+
+        menu.exec(self.proje_listesi_widget.viewport().mapToGlobal(position))
 
     def _kategori_sil(self, kategori_id: int):
         """Sil butonuna tıklanınca veya delete tuşuna basılınca çağrılır.
@@ -4594,6 +4715,13 @@ class AnaPencere(QMainWindow):
     # VERİTABANI DOSYASI YÖNETİMİ
     # =============================================================================
 
+
+    # =============================================================================
+    # FİLTRELEME İŞLEMLERİ
+    # =============================================================================
+    # VERİTABANI DOSYASI YÖNETİMİ
+    # =============================================================================
+
     def _son_kullanilan_dosya_kaydet(self):
         """Mevcut veritabanı dosyasını son kullanılanlar listesine ekle"""
         try:
@@ -5098,6 +5226,46 @@ class AnaPencere(QMainWindow):
                 }
             )
 
+        # Bilgilendirici Ara QMessageBox Oluştur
+        summary_msg = ""
+        for info in files_info:
+            dosya_adi = info["dosya_adi"]
+            kod = info["kod"]
+            isim = info["isim"]
+            mevcut = info["mevcut"]
+
+            if kod and isim:
+                otomatik_str = f"✅ Başarılı (Kod: {kod}, İsmi: {isim})"
+            else:
+                otomatik_str = "❌ Eksik (Manuel giriş gerekebilir)"
+
+            db_str = "✅ Evet (Revizyon eklenecek)" if mevcut else "❌ Hayır (Yeni proje eklenecek)"
+
+            revizyon = info["yeni_revizyon_kodu"]
+            neden = "Dosyadan/Yapay zekadan okundu" if revizyon else ""
+
+            if mevcut and not revizyon:
+                pid = self.db.proje_var_mi(kod)
+                yazi_turu = "gelen" if info.get("gelen_yazi_no") else "yok"
+                revizyon = self.db.sonraki_revizyon_kodu_onerisi(pid, yazi_turu)
+                neden = "Veritabanındaki son revizyon sırasına göre önerildi"
+                info["yeni_revizyon_kodu"] = revizyon
+            elif not mevcut and not revizyon:
+                revizyon = "A"
+                neden = "Yeni proje olduğu için varsayılan atandı"
+                info["yeni_revizyon_kodu"] = revizyon
+
+            summary_msg += f"<b>Dosya:</b> {dosya_adi}<br>"
+            summary_msg += f"&nbsp;&nbsp;&nbsp;<b>Otomatik Bilgi:</b> {otomatik_str}<br>"
+            summary_msg += f"&nbsp;&nbsp;&nbsp;<b>DB Mevcut Mu:</b> {db_str}<br>"
+            summary_msg += f"&nbsp;&nbsp;&nbsp;<b>Revizyon ({revizyon}):</b> <i>{neden}</i><br><br>"
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Dosya Analiz Özeti")
+        msg_box.setText("Seçilen dosyaların analiz sonuçları aşağıdadır:")
+        msg_box.setInformativeText(summary_msg)
+        msg_box.setIcon(QMessageBox.Information)
+        msg_box.exec()
 
         bulk_dialog = DosyadanCokluProjeDialog(self, self.db, files_info)
         if not bulk_dialog.exec():
@@ -5902,6 +6070,159 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"Toplu yazı işlemi hatası: {e}", exc_info=True)
             QMessageBox.critical(self, "Hata", f"İşlem sırasında hata oluştu: {e}")
 
+    def _secili_projelere_yazi_ekle(self, islem_turu):
+        """Kullanıcının UI üzerinden seçtiği projelere, ek eşleştirme diyalogu açmadan doğrudan yazı ekler."""
+        secili_projeler = self.project_panel.get_selected_projects()
+        if not secili_projeler:
+            QMessageBox.warning(self, "Uyarı", "Lütfen önce yazı eklemek istediğiniz projeleri seçin.")
+            return
+
+        itype = (islem_turu or "").strip().lower()
+        if itype in ("gelen", "gelen yazı", "gelen_yazi"):
+            db_action = "gelen"
+        elif itype in ("onay", "giden onay", "giden_onay"):
+            db_action = "onay"
+        elif itype in ("notlu onay", "notlu_onay", "notlu"):
+            db_action = "notlu_onay"
+        elif itype in ("red", "reddet"):
+            db_action = "red"
+        else:
+            db_action = "gelen"
+
+        baslik = f"{islem_turu} Yazısı Seç"
+        dosya_yolu, _ = QFileDialog.getOpenFileName(
+            self, baslik, "", "PDF Dosyaları (*.pdf);;Tüm Dosyalar (*.*)"
+        )
+        if not dosya_yolu:
+            return
+
+        dosya_adi = os.path.basename(dosya_yolu)
+        bilgiler = dosyadan_tarih_sayi_cikar(dosya_adi) or {}
+        letter_bilgisi = {}
+        ekler_listesi = []
+
+        if self.document_intelligence_service is not None:
+            try:
+                letter_bilgisi = self.document_intelligence_service.analyze_letter_document(dosya_yolu)
+                if not bilgiler.get("sayi") and letter_bilgisi.get("yazi_no"):
+                    bilgiler["sayi"] = letter_bilgisi["yazi_no"]
+                if not bilgiler.get("tarih") and letter_bilgisi.get("yazi_tarih"):
+                    bilgiler["tarih"] = letter_bilgisi["yazi_tarih"]
+                ekler_listesi = letter_bilgisi.get("ekler_listesi", [])
+            except Exception as e:
+                self.logger.debug("Yazı analizi başarısız (%s): %s", dosya_yolu, e)
+
+        yazi_no = bilgiler.get("sayi", "")
+        tarih = bilgiler.get("tarih", datetime.datetime.now().strftime("%d.%m.%Y"))
+        yazi_konu = letter_bilgisi.get("konu", "")
+
+        # Ek analizi ve kullanıcı bilgilendirmesi
+        secili_kodlar = [p.proje_kodu for p in secili_projeler]
+        eslesen_ekler = []
+        eslesmeyen_ekler = []
+        
+        for ek in ekler_listesi:
+            if isinstance(ek, dict) and ek.get("kod"):
+                if ek["kod"] in secili_kodlar:
+                    eslesen_ekler.append(ek["kod"])
+                else:
+                    eslesmeyen_ekler.append(ek["kod"])
+            elif isinstance(ek, str):
+                eslesmeyen_ekler.append(ek)
+
+        msg_text = f"Yazı içeriği taranarak {len(ekler_listesi)} adet proje kodu/ek tespit edildi.<br><br>"
+        msg_text += f"Siz ise listeden <b>{len(secili_projeler)} adet proje</b> seçtiniz.<br><br>"
+        
+        if eslesen_ekler:
+            msg_text += f"<b>Uyumlu Olanlar (Hem yazıda hem seçimde var):</b><br>{', '.join(eslesen_ekler)}<br><br>"
+        if eslesmeyen_ekler:
+            msg_text += f"<b>Uyumsuz/Eksik Olanlar (Yazıda var, ama seçmediniz):</b><br>{', '.join(eslesmeyen_ekler)}<br><br>"
+            
+        msg_text += "Yazıyı seçtiğiniz bu projelere eklemek istiyor musunuz? (Ek pafta dosyası sorulmayacak)"
+
+        onay = QMessageBox.question(self, "Ek ve Proje Uyumluluk Kontrolü", msg_text, QMessageBox.Yes | QMessageBox.No)
+        if onay != QMessageBox.Yes:
+            return
+
+        from dialogs.proje_dialogs import SeciliProjelerRevizyonDialog
+        revizyon_dialog = SeciliProjelerRevizyonDialog(self, self.db, secili_projeler)
+        if not revizyon_dialog.exec():
+            return
+            
+        # {proje_id: revizyon_id} map
+        rev_selections = revizyon_dialog.get_selections()
+        if not rev_selections:
+            QMessageBox.warning(self, "Uyarı", "Geçerli bir revizyon seçilmedi. İşlem iptal edildi.")
+            return
+
+        dialog = OnayRedDialog(
+            self,
+            islem_turu.capitalize(),
+            title=f"{islem_turu.capitalize()} Yazı Bilgileri",
+        )
+        dialog.yazi_no_combo.setEditText(yazi_no)
+        dialog.tarih_entry.setText(tarih)
+        dialog.dosya_etiketi.setText(dosya_adi)
+        dialog.dosya_yolu = dosya_yolu
+        if yazi_konu:
+            dialog.konu_entry.setText(yazi_konu)
+
+        if not dialog.exec():
+            return
+
+        yazi_data = dialog.get_data()
+        final_yazi_no = yazi_data["yazi_no"]
+        final_tarih = yazi_data["tarih"]
+        final_yazi_konu = yazi_data.get("konu") or None
+        final_dosya_yolu = yazi_data["dosya_yolu"] or dosya_yolu
+
+        with open(final_dosya_yolu, "rb") as f:
+            dosya_verisi = f.read()
+
+        try:
+            saved = self.db.yazi_dokumani_kaydet(
+                final_yazi_no,
+                os.path.basename(final_dosya_yolu),
+                dosya_verisi,
+                db_action,
+                final_tarih,
+            )
+            if not saved:
+                self.logger.warning(f"Yazı dokümanı kaydedilemedi: {final_yazi_no}")
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Yazı dokümanı kaydedilemedi: {e}")
+            return
+
+        eklenenler = []
+        for proje in secili_projeler:
+            pid = proje.id
+            rev_id = rev_selections.get(pid)
+            if not rev_id:
+                continue # Skip if no revision was selected for this project
+                
+            if db_action == "gelen":
+                try:
+                    with self.db.transaction():
+                        self.db.cursor.execute(
+                            "UPDATE revizyonlar SET gelen_yazi_no = ?, gelen_yazi_tarih = ?, yazi_turu = 'gelen' WHERE id = ?",
+                            (final_yazi_no, final_tarih, rev_id),
+                        )
+                    eklenenler.append(proje.proje_kodu)
+                except Exception as e:
+                    self.logger.error(f"Revizyon güncellenemedi ({proje.proje_kodu}): {e}")
+            else:
+                # Onay / Notlu Onay / Red işlemleri için mevcut metodları kullan
+                if db_action == "onay":
+                    self.db.revizyonu_onayla_ve_guncelle(rev_id, final_yazi_no, final_tarih)
+                elif db_action == "notlu_onay":
+                    self.db.revizyonu_notlu_onayla_ve_guncelle(rev_id, final_yazi_no, final_tarih)
+                elif db_action == "red":
+                    self.db.revizyonu_reddet_ve_guncelle(rev_id, final_yazi_no, final_tarih)
+                eklenenler.append(proje.proje_kodu)
+
+        QMessageBox.information(self, "Başarılı", f"İşlem {len(eklenenler)} proje (mevcut revizyonlar güncellenerek) için tamamlandı.")
+        self._invalidate_filter_cache_and_reload(keep_project_id=self.secili_proje_id)
+
     def _yazi_eklerini_isle(self, yazi_no: str, yazi_tarih: str, ekler_raw: str, ilgi_raw: str = "", ekler_listesi: list = None, db_yazi_turu: str = "gelen", yazi_konu: str = None):
         """
         YaziEklerDialog'u açar ve kullanıcının seçimlerine göre işlem yapar.
@@ -6262,13 +6583,13 @@ class AnaPencere(QMainWindow):
             self.logger.error(f"Gösterge paneli güncellenirken hata: {e}")
 
     def projeleri_filtrele(self, text=None):
-        """Arama metnine göre projeleri filtrele"""
-        # Bu metod arama kutusu değiştiğinde çağrılır.
-        # Filtreleme UI seviyesinde uygulanır; self.tum_projeler içindeki veriler üzerinde çalışır.
+        """Arama metnine göre projeleri filtrele.
+
+        Bu metod SADECE görünümü günceller; self.tum_projeler ASLA değiştirilmez.
+        tum_projeler her zaman veritabanından gelen tam listeyi içerir.
+        """
         try:
-            # Normalize a quick safe representation of tum_projeler
             if not isinstance(self.tum_projeler, list):
-                # attempt to coerce iterable to list
                 try:
                     self.tum_projeler = list(self.tum_projeler)
                 except Exception:
@@ -6285,8 +6606,14 @@ class AnaPencere(QMainWindow):
                     hiy = (getattr(p, "hiyerarsi", "") or "").lower()
                     if sorgu in kod or sorgu in isim or sorgu in hiy:
                         filtered.append(p)
-            # populate UI with filtered list
-            self._populate_projects_ui(filtered)
+
+            # Direkt _populate_ui çağrısı: load_projects yerine _populate_ui kullanarak
+            # panel tarafındaki tum_projeler'i (tam DB listesi) bozmadan sadece görünümü güncelle.
+            # use_batch=False ile senkron populate yaparak canlı aramada anında güncelleme sağla.
+            if hasattr(self, "project_panel") and hasattr(self.project_panel, "_populate_ui"):
+                self.project_panel._populate_ui(filtered, use_batch=False)
+            else:
+                self._populate_projects_ui(filtered)
         except Exception as e:
             self.logger.error(f"projeleri_filtrele hata: {e}", exc_info=True)
 

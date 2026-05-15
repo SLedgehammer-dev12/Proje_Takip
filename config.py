@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v3.1.0"
+APP_VERSION = "v3.1.1"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,13 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v3.1.1": [
+        "SIRALAMA: Proje listesine 'Son Gelen Yazı Tarihi' ve 'Bilgi/Tür' (Proje Türü) kriterlerine göre sıralama seçenekleri eklendi.",
+        "CANLI ARAMA: Proje arama barındaki canlı arama (live search) sorunu düzeltildi; arama metni girildiğinde liste anında güncelleniyor.",
+        "SAĞ TIK MENÜ: Revizyon tablosunda sağ tıklandığında Revizyon menüsündeki tüm seçenekler (Yeni Revizyon, Düzenle, Sil, Onayla, Notlu Onayla, Reddet, Durum Düzelt, İndirme Menüsü) sağ tık menüsünde de gösteriliyor.",
+        "RED FLAG: Proje bazlı red flag yönetimi iyileştirildi; artık herhangi bir proje üzerinde sağ tıklayarak 'Hatalı Kayıt' işareti eklenebiliyor veya kaldırılabiliyor.",
+        "UYUMLULUK: Eski veritabanları (v1.x, v2.x) ile tam uyumluluk ve otomatik migration desteği doğrulandı.",
+    ],
     "v3.1.0": [
         "İŞ AKIŞI: Giden yazıdan proje oluşturma/güncelleme akışı tamamen revize edildi.",
         "REVİZYON: Giden yazılar artık mevcut revizyonu güncellemek yerine YENİ bir revizyon satırı ekliyor.",

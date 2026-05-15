@@ -10,12 +10,14 @@ from PySide6.QtWidgets import (
     QSplitter,
     QListWidgetItem,
     QPushButton,
+    QComboBox,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QSignalBlocker
 from PySide6.QtGui import QIcon, QColor, QBrush, QPixmap, QPainter, QPen, QFont
 from typing import List, Dict
 import itertools
 from models import ProjeModel
+from ui.styles import normalize_tok_variant, TOK_THEME_VARIANTS
 
 
 class ProjectPanel(QWidget):
@@ -36,6 +38,7 @@ class ProjectPanel(QWidget):
     project_moved = Signal(int, int)  # proje_id, yeni_kategori_id
     advanced_filter_clicked = Signal()
     clear_filter_clicked = Signal()
+    sort_changed = Signal(str)  # Emits sort_key
 
     def __init__(self, parent=None):
         """Initialize the ProjectPanel."""
@@ -59,7 +62,6 @@ class ProjectPanel(QWidget):
         search_layout = QHBoxLayout()
         self.arama_kutusu = QLineEdit()
         self.arama_kutusu.setPlaceholderText("Proje Ara (Kod veya İsim)...")
-        self.arama_kutusu.textChanged.connect(self._on_search_text_changed)
         search_layout.addWidget(self.arama_kutusu)
 
         # Filtre Butonları
@@ -78,6 +80,23 @@ class ProjectPanel(QWidget):
         self.filter_indicator = QLabel("Filtre: Yok")
         self.filter_indicator.setStyleSheet("color: #666; padding: 5px;")
         search_layout.addWidget(self.filter_indicator)
+        
+        # Sıralama Combo
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItem("En Yeni", "id_desc")
+        self.sort_combo.addItem("En Eski", "id_asc")
+        self.sort_combo.addItem("Kod (A-Z)", "kod_asc")
+        self.sort_combo.addItem("Kod (Z-A)", "kod_desc")
+        self.sort_combo.addItem("İsim (A-Z)", "isim_asc")
+        self.sort_combo.addItem("İsim (Z-A)", "isim_desc")
+        self.sort_combo.addItem("Tarih (En Yeni)", "tarih_desc")
+        self.sort_combo.addItem("Tarih (En Eski)", "tarih_asc")
+        self.sort_combo.addItem("Bilgi/Tür (A-Z)", "tur_asc")
+        self.sort_combo.addItem("Bilgi/Tür (Z-A)", "tur_desc")
+        self.sort_combo.setToolTip("Sıralama Tercihi")
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        search_layout.addWidget(self.sort_combo)
+
         # No legend in filter bar - the icons in list/tree are sufficient
         layout.addLayout(search_layout)
 
@@ -127,10 +146,7 @@ class ProjectPanel(QWidget):
 
         layout.addWidget(self.splitter)
 
-        # Timer for search debounce
-        self.filter_timer = QTimer()
-        self.filter_timer.setSingleShot(True)
-        self.filter_timer.timeout.connect(self._apply_search_filter)
+        # Timer for search debounce is removed, managed by main_window
 
     def set_categories(self, categories: List[tuple]):
         """Set the categories list for the tree view."""
@@ -140,8 +156,8 @@ class ProjectPanel(QWidget):
         self.tum_projeler = projects
         self._populate_ui(projects)
 
-    def _populate_ui(self, projects: List[ProjeModel]):
-        """Projeleri UI'a kademeli olarak yükle (donmayı önler)."""
+    def _populate_ui(self, projects: List[ProjeModel], use_batch: bool = True):
+        """Projeleri UI'a yükle. use_batch=False ise senkron populate yap (canlı arama için)."""
         selected_project_id = self._get_selected_project_id()
 
         # Ön hazırlık: temizle ve kategorileri kur
@@ -149,6 +165,17 @@ class ProjectPanel(QWidget):
         self.proje_agaci_widget.setUpdatesEnabled(False)
         list_blocker = QSignalBlocker(self.proje_listesi_widget)
         tree_blocker = QSignalBlocker(self.proje_agaci_widget)
+        # Genişletilmiş ağaç öğelerinin durumunu kaydet
+        expanded_categories = set()
+        if hasattr(self, "kategori_items_map"):
+            for cid, item in self.kategori_items_map.items():
+                try:
+                    if item.isExpanded():
+                        expanded_categories.add(cid)
+                except Exception:
+                    pass
+        self._expanded_categories = expanded_categories
+
         try:
             self.proje_listesi_widget.clear()
             self.proje_agaci_widget.clear()
@@ -176,85 +203,105 @@ class ProjectPanel(QWidget):
             del list_blocker
             del tree_blocker
 
-        # Batch ekleme için iterator hazırla
-        self._pending_project_iter = iter(projects)
+        def _add_project_item(proje):
+            """Tek bir projeyi hem liste hem ağaç görünümüne ekle."""
+            is_flagged = int(getattr(proje, "is_flagged", 0) or 0)
+            flag_prefix = "🚩 " if is_flagged else ""
+            display_text = f"{flag_prefix}{proje.proje_kodu} - {proje.proje_ismi}"
 
-        def _add_batch():
-            nonlocal kategorisiz_item
-            batch = list(itertools.islice(self._pending_project_iter, self._batch_size))
-            if not batch:
-                # Tüm projeler eklendi
-                self.proje_listesi_widget.setUpdatesEnabled(True)
-                self.proje_agaci_widget.setUpdatesEnabled(True)
-                if not getattr(self, "_tree_expanded_once", False):
-                    try:
-                        self.proje_agaci_widget.expandAll()
-                        self._tree_expanded_once = True
-                    except Exception:
-                        pass
-                self._restore_selection(selected_project_id)
-                return
+            # Tema bazlı renkleri al
+            current_variant = getattr(self.window(), "_tok_variant", "light")
+            theme_key = normalize_tok_variant(current_variant)
+            palette = TOK_THEME_VARIANTS[theme_key]["palette"]
 
-            for proje in batch:
-                # Liste görünümü
-                if proje.durum == "Onayli":
-                    icon = self._status_icons.get('onayli')
-                    color = QColor("#d4edda")
-                elif proje.durum == "Notlu Onayli":
-                    icon = self._status_icons.get('notlu_onayli')
-                    color = QColor("#fff3cd")
-                elif proje.durum == "Reddedildi":
-                    icon = self._status_icons.get('reddedildi')
-                    color = QColor("#f8d7da")
-                else:
-                    icon = self._status_icons.get('default')
-                    color = None
+            # Liste görünümü
+            icon = self._status_icons.get('default')
+            color = None
+            text_color = None
 
-                display_text = f"{proje.proje_kodu} - {proje.proje_ismi}"
-                item = QListWidgetItem(display_text)
-                if icon:
-                    try:
-                        item.setIcon(icon)
-                    except Exception:
-                        pass
-                item.setData(Qt.UserRole, proje)
-                if color:
-                    item.setBackground(QBrush(color))
-                self.proje_listesi_widget.addItem(item)
+            if proje.durum == "Onayli":
+                icon = self._status_icons.get('onayli')
+                color = QColor(palette.get("STATUS_ONAY_BG", "#d4edda"))
+                text_color = QColor(palette.get("STATUS_ONAY_TEXT", "#155724"))
+            elif proje.durum == "Notlu Onayli":
+                icon = self._status_icons.get('notlu_onayli')
+                color = QColor(palette.get("STATUS_NOTLU_BG", "#fff3cd"))
+                text_color = QColor(palette.get("STATUS_NOTLU_TEXT", "#856404"))
+            elif proje.durum == "Reddedildi":
+                icon = self._status_icons.get('reddedildi')
+                color = QColor(palette.get("STATUS_RED_BG", "#f8d7da"))
+                text_color = QColor(palette.get("STATUS_RED_TEXT", "#721c24"))
 
-                # Ağaç görünümü
-                icon_tree = None
-                if proje.durum == "Onayli":
-                    icon_tree = self._status_icons.get('onayli')
-                elif proje.durum == "Notlu Onayli":
-                    icon_tree = self._status_icons.get('notlu_onayli')
-                elif proje.durum == "Reddedildi":
-                    icon_tree = self._status_icons.get('reddedildi')
+            item = QListWidgetItem(display_text)
+            if icon:
+                try:
+                    item.setIcon(icon)
+                except Exception:
+                    pass
+            item.setData(Qt.UserRole, proje)
+            if color:
+                item.setBackground(QBrush(color))
+            if text_color:
+                item.setForeground(QBrush(text_color))
+            self.proje_listesi_widget.addItem(item)
 
-                kategori_id = proje.kategori_id if proje.kategori_id is not None else 0
-                parent_item = self.kategori_items_map.get(kategori_id, kategorisiz_item)
+            # Ağaç görünümü
+            kategori_id = proje.kategori_id if proje.kategori_id is not None else 0
+            parent_item = self.kategori_items_map.get(kategori_id, kategorisiz_item)
 
-                t_item = QTreeWidgetItem(parent_item)
-                t_item.setText(0, display_text)
-                if icon_tree:
-                    try:
-                        t_item.setIcon(0, icon_tree)
-                    except Exception:
-                        pass
-                t_item.setData(0, Qt.UserRole, proje)
+            t_item = QTreeWidgetItem(parent_item)
+            t_item.setText(0, display_text)
+            if icon:
+                try:
+                    t_item.setIcon(0, icon)
+                except Exception:
+                    pass
+            t_item.setData(0, Qt.UserRole, proje)
 
-                if proje.durum == "Onayli":
-                    t_item.setBackground(0, QColor("#d4edda"))
-                elif proje.durum == "Notlu Onayli":
-                    t_item.setBackground(0, QColor("#fff3cd"))
-                elif proje.durum == "Reddedildi":
-                    t_item.setBackground(0, QColor("#f8d7da"))
+            if color:
+                t_item.setBackground(0, QBrush(color))
+            if text_color:
+                t_item.setForeground(0, QBrush(text_color))
 
-            # Bir sonraki parti için event loop'a dön
+        def _finalize():
+            """Populate sonrası seçim ve genişletme durumlarını geri yükle."""
+            self.proje_listesi_widget.setUpdatesEnabled(True)
+            self.proje_agaci_widget.setUpdatesEnabled(True)
+            if hasattr(self, "_expanded_categories") and self._expanded_categories:
+                for cid, item in getattr(self, "kategori_items_map", {}).items():
+                    if cid in self._expanded_categories:
+                        item.setExpanded(True)
+            elif not getattr(self, "_tree_expanded_once", False):
+                try:
+                    self.proje_agaci_widget.expandAll()
+                    self._tree_expanded_once = True
+                except Exception:
+                    pass
+            self._restore_selection(selected_project_id)
+
+        if use_batch:
+            # Batch ekleme için iterator hazırla
+            self._pending_project_iter = iter(projects)
+
+            def _add_batch():
+                batch = list(itertools.islice(self._pending_project_iter, self._batch_size))
+                if not batch:
+                    _finalize()
+                    return
+
+                for proje in batch:
+                    _add_project_item(proje)
+
+                # Bir sonraki parti için event loop'a dön
+                QTimer.singleShot(0, _add_batch)
+
+            # İlk parti
             QTimer.singleShot(0, _add_batch)
-
-        # İlk parti
-        QTimer.singleShot(0, _add_batch)
+        else:
+            # Senkron populate: canlı arama için anında güncelleme
+            for proje in projects:
+                _add_project_item(proje)
+            _finalize()
 
     def _create_status_icons(self, size: int = 16) -> dict:
         """Return a dict of QIcons for statuses (onayli, notlu_onayli, reddedildi, default).
@@ -293,19 +340,9 @@ class ProjectPanel(QWidget):
         icons['default'] = make_icon('#6c757d', '')
         return icons
 
-    def _on_search_text_changed(self):
-        self.filter_timer.start(500)  # Optimized: 300ms → 500ms (daha az ara sorgulama)
-
-    def _apply_search_filter(self):
-        text = self.arama_kutusu.text().lower()
-        filtered = [
-            p
-            for p in self.tum_projeler
-            if text in p.proje_kodu.lower()
-            or text in p.proje_ismi.lower()
-            or text in (p.hiyerarsi or "").lower()
-        ]
-        self._populate_ui(filtered)
+    def _on_sort_changed(self, index):
+        sort_key = self.sort_combo.currentData()
+        self.sort_changed.emit(sort_key)
 
     def _get_selected_project_id(self):
         try:
@@ -430,3 +467,24 @@ class ProjectPanel(QWidget):
             self.proje_agaci_widget.clearSelection()
         finally:
             del blocker
+
+    def get_selected_projects(self) -> List[ProjeModel]:
+        """Arayüzde seçili olan tüm projeleri döndürür."""
+        selected_projects = []
+        # Check list selection first, if it has items use it
+        list_items = self.proje_listesi_widget.selectedItems()
+        if list_items:
+            for item in list_items:
+                proje = item.data(Qt.UserRole)
+                if proje:
+                    selected_projects.append(proje)
+            return selected_projects
+            
+        # Fallback to tree selection
+        tree_items = self.proje_agaci_widget.selectedItems()
+        for item in tree_items:
+            proje = item.data(0, Qt.UserRole)
+            if proje:
+                selected_projects.append(proje)
+                
+        return selected_projects

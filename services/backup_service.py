@@ -20,16 +20,14 @@ class BackupService:
         self._ensure_backup_folder()
 
     def _resolve_backup_folder(self, backup_folder: str) -> str:
-        normalized_path = str(Path(self.db_path).resolve())
         db_name = Path(self.db_path).stem or "varsayilan"
         safe_db_name = "".join(
             ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in db_name
         ).strip("_") or "varsayilan"
-        path_hash = hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:10]
         backup_root = Path(backup_folder)
         if not backup_root.is_absolute():
             backup_root = Path(get_user_data_path(backup_folder, create_parent=True))
-        return str(backup_root / f"{safe_db_name}_{path_hash}")
+        return str(backup_root / safe_db_name)
 
     def _ensure_backup_folder(self):
         """Yedek klasörünü oluştur"""
@@ -46,8 +44,15 @@ class BackupService:
         Veritabanının yedeğini al
         """
         # Use sqlite3's backup API to produce a consistent copy of the DB.
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"{self.backup_folder}/yedek_{description}_{timestamp}.db"
+        timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        db_name = Path(self.db_path).stem or "varsayilan"
+        safe_db_name = "".join(
+            ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in db_name
+        ).strip("_") or "varsayilan"
+        
+        backup_file = f"{self.backup_folder}/yedek_{safe_db_name}_{timestamp}.db"
+        if description and description != "Otomatik":
+            backup_file = f"{self.backup_folder}/yedek_{safe_db_name}_{description}_{timestamp}.db"
 
         max_retries = 5
         delay_s = 0.1
@@ -143,10 +148,15 @@ class BackupService:
                 return False
 
             cutoff_ts = time.time() - (max_age_hours * 3600)
+            db_name = Path(self.db_path).stem or "varsayilan"
+            safe_db_name = "".join(
+                ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in db_name
+            ).strip("_") or "varsayilan"
+            
             pattern = (
-                f"yedek_{description_prefix}_*.db"
+                f"yedek_{safe_db_name}_{description_prefix}_*.db"
                 if description_prefix
-                else "yedek_*.db"
+                else f"yedek_{safe_db_name}_*.db"
             )
 
             for backup in backup_path.glob(pattern):

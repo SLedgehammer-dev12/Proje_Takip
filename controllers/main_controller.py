@@ -29,12 +29,12 @@ class MainController:
         # Placeholder: start any background processes or workers if needed
         return
 
-    def get_projects(self):
+    def get_projects(self, sort_by: str = "id_desc"):
         """Return list of projects based on filters (abstracted DB call)."""
         if self.filter_manager and self.filter_manager.active_filters:
-            return self.filter_manager.get_filtered_projects()
+            return self.filter_manager.get_filtered_projects(sort_by=sort_by)
         if self.db:
-            return self.db.projeleri_listele()
+            return self.db.projeleri_listele(sort_by=sort_by)
         return []
 
     def get_revisions(self, proje_id: int):

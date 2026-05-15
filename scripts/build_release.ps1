@@ -62,7 +62,8 @@ function New-VersionInfoFile {
         [Parameter(Mandatory = $true)]
         [string]$Version,
         [Parameter(Mandatory = $true)]
-        [string]$OutputPath
+        [string]$OutputPath,
+        [string]$OriginalFilename = "ProjeTakip.exe"
     )
 
     $numericVersion = ($Version -replace '^[^\d]*', '')
@@ -95,7 +96,7 @@ VSVersionInfo(
           StringStruct('FileDescription', 'Proje Takip Sistemi'),
           StringStruct('FileVersion', '$versionString'),
           StringStruct('InternalName', 'ProjeTakip'),
-          StringStruct('OriginalFilename', 'ProjeTakip.exe'),
+          StringStruct('OriginalFilename', '$OriginalFilename'),
           StringStruct('ProductName', 'Proje Takip Sistemi'),
           StringStruct('ProductVersion', '$versionString')
         ]
@@ -144,7 +145,7 @@ $releaseDir = Join-Path $repoRoot (Join-Path $OutputRoot $Version)
 $notesPath = Join-Path $repoRoot ("docs/releases/{0}.md" -f $Version)
 $distRoot = Join-Path $repoRoot (Join-Path "dist" $Version)
 $buildRoot = Join-Path $repoRoot "build"
-$bundleName = "ProjeTakip"
+$bundleName = "ProjeTakip-{0}-windows-x64" -f $Version
 $bundleDir = Join-Path $distRoot $bundleName
 $versionInfoFileName = "pyinstaller-version-info-{0}-{1}.txt" -f (($Version -replace '[^A-Za-z0-9._-]', '_')), $PID
 $versionInfoPath = Join-Path $buildRoot $versionInfoFileName
@@ -165,7 +166,7 @@ if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
 
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
-New-VersionInfoFile -Version $Version -OutputPath $versionInfoPath
+New-VersionInfoFile -Version $Version -OutputPath $versionInfoPath -OriginalFilename "$bundleName.exe"
 
 if (Test-Path $bundleDir) {
     Remove-Item -Recurse -Force $bundleDir

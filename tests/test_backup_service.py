@@ -12,7 +12,7 @@ def test_has_recent_backup_detects_matching_recent_file(tmp_path):
     backup_root = tmp_path / "backups"
     service = BackupService(str(db_path), backup_folder=str(backup_root))
 
-    recent_backup = backup_root / os.path.basename(service.backup_folder) / "yedek_Acilis_20260331_120000.db"
+    recent_backup = backup_root / os.path.basename(service.backup_folder) / "yedek_projeler_Acilis_2026_03_31_12_00_00.db"
     recent_backup.parent.mkdir(parents=True, exist_ok=True)
     recent_backup.write_bytes(b"db")
     os.utime(recent_backup, (time.time(), time.time()))

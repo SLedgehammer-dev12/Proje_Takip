@@ -267,6 +267,92 @@ class ProjeYuklemeDialog(QDialog):
         return widget
 
 
+class SeciliProjelerRevizyonDialog(QDialog):
+    """
+    Çoklu seçilen projeler için hangi mevcut revizyona yazı bağlanacağını 
+    kullanıcının seçmesini sağlayan diyalog.
+    """
+    def __init__(self, parent, db, secili_projeler: list):
+        super().__init__(parent)
+        self.db = db
+        self.secili_projeler = secili_projeler
+        self.setWindowTitle("İşlem Yapılacak Revizyonları Seçin")
+        self.setMinimumSize(600, 400)
+
+        layout = QVBoxLayout(self)
+        bilgi_label = QLabel(
+            "Seçtiğiniz projelere yazı bağlanacaktır. Lütfen her proje için yazının ekleneceği "
+            "<b>mevcut revizyonu</b> seçin. Yeni bir revizyon satırı açılmayacaktır."
+        )
+        bilgi_label.setWordWrap(True)
+        layout.addWidget(bilgi_label)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Proje Kodu", "Proje İsmi", "Uygulanacak Revizyon"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        layout.addWidget(self.table)
+
+        self._populate_table()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _populate_table(self):
+        from PySide6.QtWidgets import QTableWidgetItem, QComboBox
+        self.table.setRowCount(len(self.secili_projeler))
+        for row, proje in enumerate(self.secili_projeler):
+            kod_item = QTableWidgetItem(proje.proje_kodu)
+            kod_item.setFlags(kod_item.flags() & ~Qt.ItemIsEditable)
+            kod_item.setData(Qt.UserRole, proje.id)
+            self.table.setItem(row, 0, kod_item)
+
+            isim_item = QTableWidgetItem(proje.proje_ismi)
+            isim_item.setFlags(isim_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 1, isim_item)
+
+            # Revizyonları çek
+            revizyonlar = []
+            try:
+                # Assuming revizyon_model.py exists or we just use raw rows
+                rows = self.db.cursor.execute(
+                    "SELECT id, revizyon_kodu, durum FROM revizyonlar WHERE proje_id = ? ORDER BY proje_rev_no DESC, id DESC",
+                    (proje.id,)
+                ).fetchall()
+                revizyonlar = rows
+            except Exception:
+                pass
+
+            combo = QComboBox()
+            if not revizyonlar:
+                combo.addItem("Revizyon Bulunamadı", None)
+                combo.setEnabled(False)
+            else:
+                for rev_id, rev_kodu, durum in revizyonlar:
+                    combo.addItem(f"Rev {rev_kodu} ({durum})", rev_id)
+                # First one is the latest (since we ordered DESC)
+                combo.setCurrentIndex(0)
+            
+            self.table.setCellWidget(row, 2, combo)
+
+    def get_selections(self) -> dict:
+        """Returns a dict mapping proje_id to revizyon_id (or None if none)."""
+        from PySide6.QtWidgets import QComboBox
+        selections = {}
+        for row in range(self.table.rowCount()):
+            pid = self.table.item(row, 0).data(Qt.UserRole)
+            combo = self.table.cellWidget(row, 2)
+            if isinstance(combo, QComboBox) and combo.isEnabled():
+                rev_id = combo.currentData()
+                if rev_id:
+                    selections[pid] = rev_id
+        return selections
+
+
 class DosyadanCokluProjeDialog(QDialog):
     """Dialog for bulk management of projects detected from selected files.
 
@@ -763,7 +849,10 @@ class DosyadanCokluProjeDialog(QDialog):
                 if mevcut_item:
                     mevcut_item.setText("Hayır")
                 if self.table.item(row, 8):
-                    self.table.item(row, 8).setText("")
+                    # Check if there is an existing text before overriding
+                    current_rev = self.table.item(row, 8).text().strip()
+                    if not current_rev or current_rev == "":
+                        self.table.item(row, 8).setText("A")
         finally:
             self._suppress_events = False
 

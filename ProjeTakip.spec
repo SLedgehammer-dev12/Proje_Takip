@@ -21,7 +21,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='ProjeTakip-v3.1.0',
+    name='ProjeTakip',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -32,7 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version='D:\\İş\\Çalışan programlar\\@Güncelleme\\Proje Takip_release_v3\\build\\pyinstaller-version-info-v3.1.0.txt',
+    version='D:\\İş\\Çalışan programlar\\@Güncelleme\\Proje Takip_release_v3\\build\\pyinstaller-version-info-v3.1.1-55104.txt',
 )
 coll = COLLECT(
     exe,
@@ -41,5 +41,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='ProjeTakip-v3.1.0',
+    name='ProjeTakip',
 )

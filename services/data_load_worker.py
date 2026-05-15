@@ -15,12 +15,13 @@ class DataLoadWorker(QObject):
     error = Signal(int, str)                     # token, message
     finished = Signal(int)                       # token
 
-    def __init__(self, db_path: str, mode: str, token: int, proje_id: Optional[int] = None):
+    def __init__(self, db_path: str, mode: str, token: int, proje_id: Optional[int] = None, sort_by: str = "id_desc"):
         super().__init__()
         self.db_path = db_path
         self.mode = mode
         self.token = token
         self.proje_id = proje_id
+        self.sort_by = sort_by
 
     @Slot()
     def run(self):
@@ -33,7 +34,7 @@ class DataLoadWorker(QObject):
 
             db = ProjeTakipDB(self.db_path, allow_create=False)
             if self.mode == "projects":
-                projects: List = db.projeleri_listele()
+                projects: List = db.projeleri_listele(sort_by=self.sort_by)
                 self.projects_loaded.emit(self.token, projects)
             elif self.mode == "revisions" and self.proje_id is not None:
                 revisions: List = db.revizyonlari_getir(self.proje_id)

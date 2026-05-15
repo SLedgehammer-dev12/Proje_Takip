@@ -1,5 +1,13 @@
 # Değişiklik Günlüğü
 
+## v3.1.0 (15 Mayıs 2026)
+
+### Hata Düzeltmeleri ve Geliştirmeler
+- **Gelişmiş Yazı/Ek Eşleştirme Sistemi:** Kullanıcıların seçili projelere doğrudan "Gelen/Onay/Red" yazısı eklerken yeni revizyon açmak yerine, yazının mevcut revizyonlardan birine (kullanıcıya seçtirilerek) bağlanması sağlandı. Seçili projenin ilgili revizyon satırı güncellenerek mükerrer kayıt oluşturulmasının önüne geçildi.
+- **Otomatik Yedekleme İyileştirmesi:** Açılışta otomatik yedek alma süresi 24 saatten 4 saate düşürüldü.
+- **Yedek Klasörü Format Değişikliği:** Yedekleme dosyalarının klasörleme yapısı sadeleştirildi; karışık hash (şifreleme) metni kaldırılarak `veritabani_yedekleri/[database_adı]/` şeklinde daha anlaşılır bir klasörleme mantığına geçildi.
+- **Yedek İsimlendirme Formatı:** Yedek dosya isimleri `yedek_[çalışılan_database_adı]_[yıl]_[ay]_[gün]_[saat]_[dakika]_[saniye].db` şeklinde okunabilir formata dönüştürüldü. Ayrıca gereksiz disk kullanımını önlemek için sistemin en son alınan 2 yedeği tutup daha eskilerini temizlemesi (max 2 backup) kuralı güvence altına alındı.
+
 ## v3.0.14 (12 Mayıs 2026)
 
 ### Hata Düzeltmeleri ve Geliştirmeler

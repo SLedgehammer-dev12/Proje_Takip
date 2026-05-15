@@ -7,6 +7,7 @@ from i18n import tr
 from typing import List
 from letter_resolution import has_revision_letter, resolve_revision_letter_candidate
 from models import RevizyonModel, Durum
+from ui.styles import normalize_tok_variant, TOK_THEME_VARIANTS
 
 
 class RevisionPanel(QWidget):
@@ -135,6 +136,7 @@ class RevisionPanel(QWidget):
                 "Yazı Dok.",
                 "Uyarı",
                 "Takip",
+                "Hatalı",
             ]
         )
         self.revizyon_agaci.itemSelectionChanged.connect(self._on_selection_changed)
@@ -187,13 +189,22 @@ class RevisionPanel(QWidget):
                 takip_notu = getattr(rev, "takip_notu", None)
                 if takip_notu:
                     item.setToolTip(9, takip_notu)
+                
+                is_flagged = int(getattr(rev, "is_flagged", 0) or 0)
+                item.setText(10, tr("🚩 Hatalı") if is_flagged else "-")
+
+                # Tema bazlı renkleri al
+                current_variant = getattr(self.window(), "_tok_variant", "light")
+                theme_key = normalize_tok_variant(current_variant)
+                palette = TOK_THEME_VARIANTS[theme_key]["palette"]
 
                 if rev.durum == Durum.ONAYLI.value:
-                    item.setForeground(1, QBrush(QColor("green")))
+                    item.setForeground(1, QBrush(QColor(palette.get("STATUS_ONAY_TEXT", "green"))))
                 elif rev.durum == Durum.REDDEDILDI.value:
-                    item.setForeground(1, QBrush(QColor("red")))
+                    item.setForeground(1, QBrush(QColor(palette.get("STATUS_RED_TEXT", "red"))))
                 elif rev.durum == Durum.ONAYLI_NOTLU.value:
-                    item.setForeground(1, QBrush(QColor("orange")))
+                    item.setForeground(1, QBrush(QColor(palette.get("STATUS_NOTLU_TEXT", "orange"))))
+                
                 if yazi_dokuman_durumu == "Eksik":
                     item.setForeground(7, QBrush(QColor("red")))
                 elif yazi_dokuman_durumu == "Yüklü":
@@ -202,15 +213,15 @@ class RevisionPanel(QWidget):
                     item.setForeground(8, QBrush(QColor("darkorange")))
                 if takipte_mi:
                     item.setForeground(9, QBrush(QColor("blue")))
-                    takip_fill = QBrush(QColor("#ffe7db"))
-                    for col in range(10):
+                    takip_fill = QBrush(QColor(palette.get("STATUS_NOTLU_BG", "#ffe7db")))
+                    for col in range(11):
                         item.setBackground(col, takip_fill)
 
                 item.setData(0, Qt.UserRole, rev)
                 item.setData(4, Qt.UserRole, display_letter.logical_type if display_letter else None)
 
             if not getattr(self, "_columns_sized_once", False):
-                for i in range(10):
+                for i in range(11):
                     tree.resizeColumnToContents(i)
                 self._columns_sized_once = True
         finally:

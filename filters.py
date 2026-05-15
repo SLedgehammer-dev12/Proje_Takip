@@ -590,7 +590,7 @@ class AdvancedFilterManager(QObject):
             return "", []
         return "(" + " OR ".join(parts) + ")", []
 
-    def get_filtered_projects(self) -> List[ProjeModel]:
+    def get_filtered_projects(self, sort_by: str = "id_desc") -> List[ProjeModel]:
         """
         Filtrelenmiş projeleri döndürür - optimize edilmiş sorgu
         Cache mekanizması ile performans iyileştirmesi
@@ -607,7 +607,7 @@ class AdvancedFilterManager(QObject):
                     )
                     for f in self.active_filters
                 ]
-            )
+            ) + hash(sort_by)
         )
 
         if (
@@ -620,6 +620,17 @@ class AdvancedFilterManager(QObject):
         where_clause, params = self.build_sql_where_clause()
 
         # Optimize edilmiş sorgu - ROW_NUMBER() CTE ile
+        # Siralama mantigi
+        sort_mapping = {
+            "id_desc": "p.id DESC",
+            "id_asc": "p.id ASC",
+            "kod_asc": "p.proje_kodu ASC",
+            "kod_desc": "p.proje_kodu DESC",
+            "isim_asc": "p.proje_ismi ASC",
+            "isim_desc": "p.proje_ismi DESC",
+        }
+        order_clause = sort_mapping.get(sort_by, "p.id DESC")
+
         sorgu = f"""
         WITH SonRevizyon AS (
             SELECT *,
@@ -645,11 +656,12 @@ class AdvancedFilterManager(QObject):
             r.tse_gonderildi,
             r.onay_yazi_no,
             r.red_yazi_no,
-            p.kategori_id
+            p.kategori_id,
+            (SELECT COALESCE(MAX(is_flagged), 0) FROM revizyonlar WHERE proje_id = p.id) as is_flagged
         FROM projeler p
         LEFT JOIN SonRevizyon r ON p.id = r.proje_id AND r.rn = 1
         {where_clause}
-        ORDER BY p.id DESC
+        ORDER BY {order_clause}
         """
 
         self.db.cursor.execute(sorgu, params)

@@ -1,5 +1,10 @@
 PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.1.0 ---
+  * YAZI BAĞLAMA: Seçili projelere Gelen/Onay/Red yazısı eklenirken yeni revizyon açmak yerine mevcut revizyonlardan biri seçilerek üzerine yazılabiliyor.
+  * YEDEKLEME: Açılışta otomatik yedek alma kontrol süresi 24 saatten 4 saate düşürüldü.
+  * DOSYALAMA: Yedek klasör formatındaki karmaşık hashler kaldırılarak 'veritabani_yedekleri/database_adi' şekline getirildi.
+  * GÖRÜNÜM: Kategori görünümünde proje sürükle-bırak işlemi sonrası alt başlıkların/kırılımların otomatik kapanması engellendi.
 --- Sürüm: v3.0.16 ---
   * İŞ AKIŞI: Giden yazıdan proje oluşturma/güncelleme akışı tamamen revize edildi.
   * REVİZYON: Giden yazılar artık mevcut revizyonu güncellemek yerine YENİ bir revizyon satırı ekliyor.

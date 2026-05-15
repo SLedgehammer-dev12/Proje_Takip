@@ -595,14 +595,19 @@ class DocumentIntelligenceService:
             return {"text": "", "source": "", "used_ocr": False}
 
         try:
-            image = self._pil_image.open(file_path)
-            if analysis_kind == "project":
-                image = self._crop_project_image_region(image)
-            return {
-                "text": self._ocr_image(image),
-                "source": "image_ocr",
-                "used_ocr": True,
-            }
+            with self._pil_image.open(file_path) as image:
+                if analysis_kind == "project":
+                    # We might need to copy the cropped region if we are returning it,
+                    # but _ocr_image reads the image immediately.
+                    processed_image = self._crop_project_image_region(image)
+                else:
+                    processed_image = image
+                
+                return {
+                    "text": self._ocr_image(processed_image),
+                    "source": "image_ocr",
+                    "used_ocr": True,
+                }
         except Exception as exc:
             self.logger.warning("Resim OCR basarisiz (%s): %s", file_path, exc)
             return {"text": "", "source": "", "used_ocr": False}
@@ -826,6 +831,11 @@ class DocumentIntelligenceService:
                     lower,
                 ):
                     break
+                    
+                # Skip footer / signature boilerplate lines
+                if any(word in lower for word in ["elektronik imza", "adres", "telefon", "fax", "faks", "posta", "internet", "bilgi için", "sayfa"]):
+                    continue
+                    
                 # Over-indented (signature block) — stop
                 if len(line) - len(line.lstrip()) > 20:
                     break
