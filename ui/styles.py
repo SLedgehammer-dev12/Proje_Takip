@@ -249,7 +249,7 @@ def apply_stylesheet(
             QTabBar::tab { background: {TAB_BG}; color: {TEXT}; padding: 8px 16px; margin-right: 2px; border: 1px solid {BORDER}; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; }
             QTabBar::tab:selected { background: {TAB_SELECTED_BG}; color: {TEXT}; font-weight: 700; }
             QTabBar::tab:hover:!selected { background: {HOVER}; color: {TEXT}; }
-            QGroupBox { font-weight: 700; font-size: 10.5pt; color: {GROUPBOX_TEXT}; margin-top: 16px; padding-top: 12px; border: 1px solid {BORDER}; border-radius: 6px; background: {SURFACE}; }
+            QGroupBox { font-weight: 700; font-size: 11pt; color: {GROUPBOX_TEXT}; margin-top: 16px; padding-top: 12px; border: 1px solid {BORDER}; border-radius: 6px; background: {SURFACE}; }
             QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 12px; padding: 0 6px; background: {SURFACE}; }
             QListWidget, QTreeWidget { background: {LIST_BG}; border: 1px solid {LIST_BORDER}; border-radius: 4px; alternate-background-color: {BG_LIGHT}; outline: none; }
             QListWidget::item, QTreeWidget::item { padding: 6px 8px; border-radius: 3px; color: {LIST_ITEM_COLOR}; }
@@ -270,10 +270,10 @@ def apply_stylesheet(
             QLabel[class="subheader"] { background: {SURFACE}; font-weight: 500; color: {SUBHEADER_TEXT}; }
             QFormLayout QLabel { font-weight: 600; }
             QMenuBar { background: {SURFACE}; border-bottom: 1px solid {BORDER}; padding: 2px; }
-            QMenuBar::item { background: transparent; padding: 6px 12px; border-radius: 4px; color: {TEXT}; }
+            QMenuBar::item { background: transparent; padding: 6px 12px; border-radius: 4px; color: {TEXT}; font-size: 10pt; }
             QMenuBar::item:selected { background: {BG_LIGHT}; }
             QMenu { background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 4px; padding: 4px; }
-            QMenu::item { padding: 6px 24px 6px 12px; border-radius: 3px; color: {TEXT}; }
+            QMenu::item { padding: 6px 24px 6px 12px; border-radius: 3px; color: {TEXT}; font-size: 10pt; }
             QMenu::item:selected { background: {MENU_SELECTED_BG}; color: {MENU_SELECTED_TEXT}; }
             QMessageBox { background: {SURFACE}; }
             QMessageBox QLabel { color: {MESSAGEBOX_TEXT}; }

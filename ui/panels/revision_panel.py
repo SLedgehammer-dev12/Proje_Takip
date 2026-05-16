@@ -44,29 +44,6 @@ class RevisionPanel(QWidget):
         btn_row.setContentsMargins(0, 0, 0, 0)
         btn_row.setSpacing(6)
 
-        tracking_button_style = """
-            QPushButton {
-                background-color: #ffffff;
-                color: #2f3542;
-                border: 1px solid #d9dee7;
-                border-radius: 7px;
-                padding: 3px 10px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #fff5ee;
-                border-color: #f0b284;
-            }
-            QPushButton:pressed {
-                background-color: #ffe8d9;
-            }
-            QPushButton:disabled {
-                background-color: #f4f6f9;
-                color: #9aa3b2;
-                border-color: #e6e9ef;
-            }
-            """
-
         self.revizyon_takip_btn = QPushButton("Takip Notu")
         self.revizyon_takip_btn.setToolTip(
             "Seçili revizyona takip notu ekle veya güncelle"
@@ -74,7 +51,6 @@ class RevisionPanel(QWidget):
         self.revizyon_takip_btn.setEnabled(False)
         self.revizyon_takip_btn.setFixedHeight(28)
         self.revizyon_takip_btn.setCursor(Qt.PointingHandCursor)
-        self.revizyon_takip_btn.setStyleSheet(tracking_button_style)
         btn_row.addWidget(self.revizyon_takip_btn)
 
         self.revizyon_takip_kaldir_btn = QPushButton("Takibi Kaldır")
@@ -84,7 +60,6 @@ class RevisionPanel(QWidget):
         self.revizyon_takip_kaldir_btn.setEnabled(False)
         self.revizyon_takip_kaldir_btn.setFixedHeight(28)
         self.revizyon_takip_kaldir_btn.setCursor(Qt.PointingHandCursor)
-        self.revizyon_takip_kaldir_btn.setStyleSheet(tracking_button_style)
         btn_row.addWidget(self.revizyon_takip_kaldir_btn)
 
         self.view_letter_btn = QPushButton("📄 Yazıyı Görüntüle")
@@ -94,30 +69,6 @@ class RevisionPanel(QWidget):
         self.view_letter_btn.setEnabled(False)
         self.view_letter_btn.setFixedHeight(28)
         self.view_letter_btn.setCursor(Qt.PointingHandCursor)
-        self.view_letter_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #ffffff;
-                color: #2f3542;
-                border: 1px solid #d9dee7;
-                border-radius: 7px;
-                padding: 3px 10px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #eaf4ff;
-                border-color: #6baed6;
-            }
-            QPushButton:pressed {
-                background-color: #d0e8fb;
-            }
-            QPushButton:disabled {
-                background-color: #f4f6f9;
-                color: #9aa3b2;
-                border-color: #e6e9ef;
-            }
-            """
-        )
         self.view_letter_btn.clicked.connect(self._on_view_letter_clicked)
         btn_row.addWidget(self.view_letter_btn)
         btn_row.addStretch(1)

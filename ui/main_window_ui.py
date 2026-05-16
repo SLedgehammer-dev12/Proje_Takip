@@ -31,20 +31,16 @@ from i18n import get_current_language
 
 
 def setup_ui(self):
-    # Keep identical behavior with previous implementation but move the code here
     self.setGeometry(100, 100, 1600, 900)
     self.ana_widget = QWidget()
     self.setCentralWidget(self.ana_widget)
     from PySide6.QtWidgets import QHBoxLayout
 
     self.ana_layout = QHBoxLayout(self.ana_widget)
-    # (actual layout creation is done in main_window to avoid double imports)
-    # Call the original helpers from this module
     _setup_toolbar(self)
     self.ana_bolunmus_pencere = QSplitter(Qt.Horizontal)
     self.ana_layout = self.ana_layout or self.ana_widget.layout() or None
     if not self.ana_layout:
-        # fallback to horizontal layout to keep old behavior
         from PySide6.QtWidgets import QHBoxLayout
 
         self.ana_layout = QHBoxLayout(self.ana_widget)
@@ -63,13 +59,11 @@ def setup_ui(self):
         _wrap_main_panel(self, self.sag_dikey_bolucu, "details")
     )
     self.ana_bolunmus_pencere.setSizes([400, 800, 400])
-    # Restore UI state if available
     try:
         self._restore_ui_state()
     except Exception:
         pass
 
-    # Final UI adjustments (splitter sizes, minimum sizes, header modes etc.)
     try:
         _finalize_ui(self)
     except Exception:
@@ -111,10 +105,8 @@ def _setup_toolbar(self):
 
 
 def _setup_projeler_panel(self):
-    # Create the panel wrapper with tabs
     from ui.panels.project_panel import ProjectPanel
 
-    # Initialize ProjectPanel
     if not hasattr(self, "project_panel"):
         self.project_panel = ProjectPanel()
         self.project_panel.project_selected.connect(self.on_project_selected_from_panel)
@@ -122,44 +114,54 @@ def _setup_projeler_panel(self):
         self.project_panel.advanced_filter_clicked.connect(self.show_advanced_filters)
         self.project_panel.clear_filter_clicked.connect(self.clear_filters)
 
-        # Compatibility aliases
         self.proje_listesi_widget = self.project_panel.proje_listesi_widget
         self.proje_agaci_widget = self.project_panel.proje_agaci_widget
         self.arama_kutusu = self.project_panel.arama_kutusu
         self.filter_indicator = self.project_panel.filter_indicator
+        self.sort_combo = self.project_panel.sort_combo
 
-    # Create tab widget wrapper
+    self.arama_kutusu.textChanged.connect(self._on_search_text_changed)
+
+    # Hide the splitter inside ProjectPanel since we use tabs instead
+    try:
+        self.project_panel.splitter.hide()
+    except Exception:
+        pass
+
     panel = QWidget()
     from PySide6.QtWidgets import QVBoxLayout
 
     layout = QVBoxLayout(panel)
     layout.setContentsMargins(0, 0, 0, 0)
 
-    # Add search bar from ProjectPanel
-    layout.addWidget(self.arama_kutusu.parent())  # Add the whole search layout
+    # Build search bar directly with individual widget reparenting
+    search_widget = QWidget()
+    from PySide6.QtWidgets import QHBoxLayout
 
-    # Connect live search signal (critical for search-as-you-type)
-    self.arama_kutusu.textChanged.connect(self._on_search_text_changed)
+    search_layout = QHBoxLayout(search_widget)
+    search_layout.setContentsMargins(0, 0, 0, 0)
+    search_layout.addWidget(self.arama_kutusu)
+    search_layout.addWidget(self.project_panel.btn_adv_filter)
+    search_layout.addWidget(self.project_panel.btn_clear_filter)
+    search_layout.addWidget(self.filter_indicator)
+    search_layout.addWidget(self.sort_combo)
+    layout.addWidget(search_widget)
 
-    # Create tab widget
     self.sekme_widget = QTabWidget()
     layout.addWidget(self.sekme_widget)
 
-    # Add list view tab
     sekme_liste = QWidget()
     liste_layout = QVBoxLayout(sekme_liste)
     liste_layout.setContentsMargins(0, 0, 0, 0)
     liste_layout.addWidget(self.proje_listesi_widget)
     self.sekme_widget.addTab(sekme_liste, "Tüm Projeler")
 
-    # Add tree view tab
     sekme_agac = QWidget()
     agac_layout = QVBoxLayout(sekme_agac)
     agac_layout.setContentsMargins(0, 0, 0, 0)
     agac_layout.addWidget(self.proje_agaci_widget)
     self.sekme_widget.addTab(sekme_agac, "Kategori Görünümü")
 
-    # Add report tab
     self.sekme_widget.addTab(_setup_rapor_paneli(self), "Gösterge Paneli")
 
     self.sekme_widget.addTab(_setup_log_panel(self), "Loglar")

@@ -1,7 +1,7 @@
-"""Arka plan veri yükleyici (projeler ve revizyonlar).
+﻿"""Arka plan veri yükleyici (projeler ve revizyonlar).
 
 UI thread'i bloklamamak için her istekte ayrı bir QThread içinde çalışır.
-Her iş, kendi SQLite bağlantısını açar; ana bağlantıyı paylaşmaz.
+Read connection pool kullanarak bağlantı açma/kapama overhead'ini azaltır.
 """
 
 from typing import Optional, List
@@ -26,6 +26,7 @@ class DataLoadWorker(QObject):
     @Slot()
     def run(self):
         db = None
+        conn = None
         try:
             from database import ProjeTakipDB
 
@@ -33,6 +34,9 @@ class DataLoadWorker(QObject):
                 raise FileNotFoundError(f"Veritabanı bulunamadı: {self.db_path}")
 
             db = ProjeTakipDB(self.db_path, allow_create=False)
+            conn = db.acquire_read_connection()
+            db.cursor = conn.cursor()
+            
             if self.mode == "projects":
                 projects: List = db.projeleri_listele(sort_by=self.sort_by)
                 self.projects_loaded.emit(self.token, projects)
@@ -46,6 +50,8 @@ class DataLoadWorker(QObject):
                 pass
         finally:
             try:
+                if conn and db:
+                    db.release_read_connection(conn)
                 if db:
                     db.close()
             except Exception:

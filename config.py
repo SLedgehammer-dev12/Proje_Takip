@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v3.1.1"
+APP_VERSION = "v3.2.1"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,35 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v3.2.1": [
+        "DÜZELTME: UI layout hatası düzeltildi; menüler, sıralama combo'su, filtre butonları ve arama çubuğu artık tüm temalarda görünür.",
+        "DÜZELTME: Menü kurulum metodları (_setup_file_menu vb.) AnaPencere sınıfına doğru şekilde bağlandı.",
+        "DÜZELTME: Red Flag kaldırma/işaretleme sonrası UI anında güncelleniyor; asenkron batch gecikmesi force_sync ile giderildi.",
+        "DÜZELTME: revizyonlari_getir() sorgusuna r.is_flagged alanı eklendi; revizyon tablosunda flag sütunu artık çalışıyor.",
+        "YENİDEN YAPILANDIRMA: Red Flag sistemi; proje listesinde sadece işaretleme, kaldırma revizyon tablosu sağ tık menüsü üzerinden. İşaretleme artık projenin en son revizyonuna uygulanıyor.",
+        "İYİLEŞTİRME: _invalidate_filter_cache_and_reload metodu yeniden yazıldı; silent exception swallowing loglama ile değiştirildi.",
+        "İYİLEŞTİRME: Ön izleme paneli hata yönetimi güçlendirildi; harf (letter) render hataları alt panele yönlendiriliyor.",
+        "İYİLEŞTİRME: Yeni revizyon seçiminde eski ön izleme görüntüsü anında temizleniyor.",
+        "DÜZELTME: BOTAŞ ikonu (app_icon.ico) PyInstaller datas listesine eklendi; OneDir modunda ikon görünür hale geldi.",
+        "TEMA: preview_panel, detail_panel, revision_panel TOK temasına uyumlu hale getirildi; dark temada yazı renkleri artık görünür.",
+        "GÖRÜNÜM: Menü ve başlık font boyutları büyütüldü (QMenuBar/QMenu: 10pt, QGroupBox: 11pt).",
+        "DİLEKÇE AYRIŞTIRMA: 'Sayı :', 'Tarih:', 'Konu :' başlık bölgesi öncelikli ayrıştırma eklendi; E- önekli, bileşik kod ve Evrak Tarih ve Sayısı formatı destekleniyor.",
+        "DİLEKÇE AYRIŞTIRMA: Çok satırlı konu başlıkları yakalama ve konu devam satırı birleştirme eklendi.",
+        "DİLEKÇE AYRIŞTIRMA: Ek/Ekler bölümü için 16 regex desenli iletişim/temas bilgisi filtresi eklendi; e-posta, web, telefon, faks, adres, KEP, imza vb. artık ek olarak listelenmiyor.",
+        "TEST: 90 yeni birim testi eklendi (UI layout 17, preview pipeline 27, red flag flow 12, letter parsing 24, ek filtering 10).",
+        "TEST: Toplam 195 birim testi + smoke test başarıyla geçiliyor.",
+    ],
+    "v3.2.0": [
+        "REFACTORING: _revizyon_guncelle_db metodu 6 odaklanmış alt metoda bölündü; kod okunabilirliği ve bakımı iyileştirildi.",
+        "PERFORMANS: Write Queue servisi eklendi; yazma işlemleri kuyruklanarak 'database is locked' hatalarına karşı exponential backoff retry (100ms→1600ms, max 5) uygulandı.",
+        "PERFORMANS: Read Connection Pool eklendi; 3 önceden başlatılmış salt-okunur bağlantı havuzu ile arka plan veri yükleme işlemleri 3-5x hızlandırıldı.",
+        "PERFORMANS: Otomatik WAL Checkpoint timer eklendi; 5 dakikada bir pasif checkpoint ile WAL dosya boyutu kontrol altında tutuluyor.",
+        "PERFORMANS: Ağ paylaşımı optimizasyonu; network modunda WAL modu yeniden etkinleştirildi, cache boyutu 128MB'ya çıkarıldı, busy timeout 30 saniyeye yükseltildi.",
+        "GÜVENİLİRLİK: 30 dakikalık veritabanı sağlık kontrolü (PRAGMA quick_check) eklendi; bozulma erken tespit ediliyor.",
+        "TEMİZLİK: Dead code ve duplicate metinler temizlendi; show_user_guide_tab gereksiz yorumlar kaldırıldı.",
+        "TEST: 30 yeni optimizasyon testi eklendi (write queue, connection pool, WAL checkpoint, health check, network PRAGMA).",
+        "UYUMLULUK: Toplam 88 birim testi, smoke test ve strict deprecation warning kontrolü başarıyla geçildi.",
+    ],
     "v3.1.1": [
         "SIRALAMA: Proje listesine 'Son Gelen Yazı Tarihi' ve 'Bilgi/Tür' (Proje Türü) kriterlerine göre sıralama seçenekleri eklendi.",
         "CANLI ARAMA: Proje arama barındaki canlı arama (live search) sorunu düzeltildi; arama metni girildiğinde liste anında güncelleniyor.",

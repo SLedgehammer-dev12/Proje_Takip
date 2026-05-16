@@ -1,5 +1,16 @@
 PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.2.1 ---
+  * ARAYÜZ DÜZELTME: Menüler, sıralama combo'su, filtre butonları ve arama çubuğu layout hatası giderilerek tüm temalarda görünür hale getirildi.
+  * RED FLAG YENİDEN YAPILANDIRMA: Proje listesinde sadece işaretleme yapılıyor; kaldırma revizyon tablosu sağ tık menüsü üzerinden. İşaretleme en son revizyona uygulanıyor.
+  * RED FLAG DÜZELTME: revizyonlari_getir() sorgusuna is_flagged alanı eklendi; revizyon tablosunda flag sütunu artık çalışıyor.
+  * ÖN İZLEME İYİLEŞTİRME: Hata yönetimi güçlendirildi; harf render hataları alt panele yönlendiriliyor. Yeni revizyon seçiminde eski görüntü anında temizleniyor.
+  * BOTAŞ İKONU: app_icon.ico PyInstaller datas listesine eklendi; OneDir modunda ikon görünür hale geldi.
+  * TEMA KONTRAST: preview_panel, detail_panel, revision_panel TOK temasına uyumlu; dark temada yazı renkleri okunabilir.
+  * FONT: Menü ve başlık font boyutları büyütüldü (menü: 10pt, başlık: 11pt).
+  * DİLEKÇE AYRIŞTIRMA: 'Sayı :', 'Tarih:', 'Konu :' başlık bölgesi öncelikli ayrıştırma; E- önek, bileşik kod, Evrak formatı destekleniyor. Çok satırlı konu başlıkları yakalanıyor.
+  * EK FİLTRELEME: 16 regex desenli iletişim/temas bilgisi filtresi; e-posta, web, telefon, faks, adres, KEP, imza vb. ek listesine girmiyor.
+  * TEST: Toplam 195 birim testi + smoke test başarıyla geçiliyor (90 yeni test).
 --- Sürüm: v3.1.0 ---
   * YAZI BAĞLAMA: Seçili projelere Gelen/Onay/Red yazısı eklenirken yeni revizyon açmak yerine mevcut revizyonlardan biri seçilerek üzerine yazılabiliyor.
   * YEDEKLEME: Açılışta otomatik yedek alma kontrol süresi 24 saatten 4 saate düşürüldü.

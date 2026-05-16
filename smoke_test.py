@@ -1,4 +1,4 @@
-
+﻿
 import os
 import sqlite3
 from database import ProjeTakipDB
@@ -13,9 +13,6 @@ def smoke_test():
     db = ProjeTakipDB(db_name)
     
     print("2. Adding a dummy project...")
-    # Add project manually or via db methods if available
-    # ProjeTakipDB doesn't have a direct 'proje_ekle' without revizyon
-    # We'll use a transaction
     with db.transaction():
         db.cursor.execute("INSERT INTO projeler (proje_kodu, proje_ismi) VALUES ('P1', 'Test Proje')")
         p_id = db.cursor.lastrowid
@@ -36,15 +33,13 @@ def smoke_test():
     assert p.is_flagged == 0, f"Expected unflagged project, got {p.is_flagged}"
     
     print("6. Checking Sorting options...")
-    # This just ensures no crash
     db.projeleri_listele(sort_by="tarih_desc")
     db.projeleri_listele(sort_by="tur_asc")
     
     print("7. Compatibility Check: Simulate an old DB without is_flagged column...")
-    db.conn.close()
+    db.close()
     os.remove(db_name)
     
-    # Create a bare bones old DB
     conn = sqlite3.connect(db_name)
     conn.execute("CREATE TABLE projeler (id INTEGER PRIMARY KEY, proje_kodu TEXT, proje_ismi TEXT)")
     conn.execute("CREATE TABLE revizyonlar (id INTEGER PRIMARY KEY, proje_id INTEGER, durum TEXT)")
@@ -53,14 +48,13 @@ def smoke_test():
     print("   Initializing DB on old schema...")
     db_old = ProjeTakipDB(db_name)
     
-    # Check if column exists
     conn = db_old._get_connection()
     cursor = conn.execute("PRAGMA table_info(revizyonlar)")
     columns = [row[1] for row in cursor.fetchall()]
     assert "is_flagged" in columns, "Migration failed to add is_flagged column"
     
     print("Smoke test passed successfully!")
-    db_old.conn.close()
+    db_old.close()
     if os.path.exists(db_name):
         os.remove(db_name)
 

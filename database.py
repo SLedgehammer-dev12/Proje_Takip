@@ -1,11 +1,13 @@
-import sqlite3
+﻿import sqlite3
 import logging
 import datetime
 import os
-from typing import Optional, Dict, List, Tuple, Any
+import threading
+from typing import Optional, Dict, List, Tuple, Any, Callable
 
 from models import Durum, DatabaseError, ProjeModel, RevizyonModel
 from services.user_repository import UserRepository
+from services.write_queue import WriteQueue
 from project_types import normalize_project_type
 from utils import get_class_logger
 # CLEANUP: migration_service removed - migrations completed
@@ -48,6 +50,14 @@ class ProjeTakipDB:
         self._query_cache_max_size = 50  # Store up to 50 cached queries
         self._cache_enabled = True
 
+        # OPTIMIZATION: Write queue, connection pool, and timers
+        self._write_queue = WriteQueue(max_retries=5, base_delay_ms=100, max_delay_ms=1600)
+        self._read_pool: List[sqlite3.Connection] = []
+        self._read_pool_lock = threading.Lock()
+        self._wal_checkpoint_timer = None
+        self._health_check_timer = None
+        self._init_read_pool()
+
         # Setup database
         self.tablolari_olustur()
         # Run schema/data migrations BEFORE creating indexes (migrations may add columns)
@@ -61,6 +71,10 @@ class ProjeTakipDB:
             self.user_repo.create_initial_users()
         except Exception as e:
             self.logger.warning(f"Failed to create initial users: {e}")
+
+        # Start optimization timers
+        self._start_wal_checkpoint_timer()
+        self._start_health_check_timer()
 
 
     def _get_connection(self):
@@ -86,17 +100,19 @@ class ProjeTakipDB:
 
         if is_network:
             pragma_statements = (
-                "PRAGMA journal_mode = DELETE",
+                "PRAGMA journal_mode = WAL",
                 "PRAGMA synchronous = FULL",
                 "PRAGMA foreign_keys = ON",
-                "PRAGMA busy_timeout = 20000",
-                "PRAGMA cache_size = -64000",
+                "PRAGMA busy_timeout = 30000",
+                "PRAGMA cache_size = -128000",
                 "PRAGMA mmap_size = 0",
                 "PRAGMA temp_store = MEMORY",
                 "PRAGMA page_size = 4096",
+                "PRAGMA wal_autocheckpoint = 500",
+                "PRAGMA journal_size_limit = 33554432",
             )
             try:
-                self.logger.info("Ağ paylaşımlı veritabanı algılandı; WAL devre dışı (path=%s)", path)
+                self.logger.info("Ağ paylaşımlı veritabanı algılandı; optimize edilmiş WAL modu (path=%s)", path)
             except Exception:
                 pass
         else:
@@ -124,6 +140,78 @@ class ProjeTakipDB:
     ) -> sqlite3.Connection:
         """Thread-safe kullanım için aynı ayarlarla yeni bağlantı aç."""
         return self._open_connection(db_path)
+
+    def _init_read_pool(self, pool_size: int = 3):
+        """Initialize read-only connection pool."""
+        for _ in range(pool_size):
+            conn = self.create_independent_connection()
+            try:
+                conn.execute("PRAGMA query_only = ON")
+            except Exception:
+                pass
+            with self._read_pool_lock:
+                self._read_pool.append(conn)
+        self.logger.info(f"Read connection pool initialized ({pool_size} connections)")
+
+    def acquire_read_connection(self) -> sqlite3.Connection:
+        """Acquire a read-only connection from pool."""
+        with self._read_pool_lock:
+            if self._read_pool:
+                return self._read_pool.pop()
+        return self.create_independent_connection()
+
+    def release_read_connection(self, conn: sqlite3.Connection):
+        """Release a read-only connection back to pool."""
+        with self._read_pool_lock:
+            if len(self._read_pool) < 5:
+                self._read_pool.append(conn)
+            else:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def _start_wal_checkpoint_timer(self):
+        """Start periodic WAL checkpoint timer."""
+        try:
+            from PySide6.QtCore import QTimer
+            self._wal_checkpoint_timer = QTimer()
+            self._wal_checkpoint_timer.timeout.connect(self._perform_wal_checkpoint)
+            self._wal_checkpoint_timer.start(300000)  # 5 minutes
+        except Exception:
+            pass
+
+    def _perform_wal_checkpoint(self):
+        """Perform passive WAL checkpoint."""
+        try:
+            self.cursor.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            self.cursor.execute("PRAGMA journal_size_limit = 67108864")
+        except Exception:
+            pass
+
+    def _start_health_check_timer(self):
+        """Start periodic database health check timer."""
+        try:
+            from PySide6.QtCore import QTimer
+            self._health_check_timer = QTimer()
+            self._health_check_timer.timeout.connect(self._health_check)
+            self._health_check_timer.start(1800000)  # 30 minutes
+        except Exception:
+            pass
+
+    def _health_check(self):
+        """Perform quick database integrity check."""
+        try:
+            self.cursor.execute("PRAGMA quick_check")
+            result = self.cursor.fetchone()
+            if result and result[0] != "ok":
+                self.logger.warning(f"Database integrity warning: {result[0]}")
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}", exc_info=True)
+
+    def execute_write(self, operation: Callable, *args, **kwargs) -> Any:
+        """Execute a write operation through the write queue."""
+        return self._write_queue.submit(operation, *args, **kwargs)
 
     def transaction(self, track_change: bool = True):
         """Context manager for transactions"""
@@ -631,10 +719,33 @@ class ProjeTakipDB:
         if self._is_closed:
             return
         try:
+            self._stop_optimization_timers()
             self.prepare_for_shutdown()
         finally:
+            self._close_read_pool()
             self.cleanup_connections()
             self._close_main_connection()
+
+    def _stop_optimization_timers(self):
+        """Stop WAL checkpoint and health check timers."""
+        try:
+            if self._wal_checkpoint_timer:
+                self._wal_checkpoint_timer.stop()
+            if self._health_check_timer:
+                self._health_check_timer.stop()
+            self._write_queue.stop()
+        except Exception:
+            pass
+
+    def _close_read_pool(self):
+        """Close all connections in the read pool."""
+        with self._read_pool_lock:
+            for conn in self._read_pool:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._read_pool.clear()
 
     # =============================================================================
     # CRUD OPERATIONS
@@ -1194,8 +1305,8 @@ class ProjeTakipDB:
                    ELSE 0
                END as takipte_mi,
                (SELECT t.takip_notu FROM revizyon_takipleri t WHERE t.revizyon_id = r.id LIMIT 1) as takip_notu,
-               r.yazi_konu, r.yazi_kurum
-        FROM revizyonlar r
+               r.yazi_konu, r.yazi_kurum, r.is_flagged
+         FROM revizyonlar r
         WHERE r.proje_id = ? 
         ORDER BY r.proje_rev_no DESC, r.id DESC
         """

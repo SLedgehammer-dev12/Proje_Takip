@@ -104,12 +104,10 @@ class DetailPanel(QWidget):
             
             if is_in_list:
                 liste_durumu = "✓ Bu proje listede var"
-                # Apply green color for found projects
                 self.detay_etiketleri["Liste Durumu:"].setStyleSheet("color: #2e7d32; font-weight: bold;")
             else:
                 liste_durumu = "✗ Bu proje listede yok"
-                # Apply gray color for not found projects
-                self.detay_etiketleri["Liste Durumu:"].setStyleSheet("color: #757575;")
+                self.detay_etiketleri["Liste Durumu:"].setStyleSheet("color: #a0a0a0;")
             
             self.detay_etiketleri["Liste Durumu:"].setText(liste_durumu)
             self.detay_etiketleri["Listedeki Tür:"].setText(excel_type)

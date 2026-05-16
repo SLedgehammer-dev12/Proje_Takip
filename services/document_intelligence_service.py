@@ -60,6 +60,34 @@ class DocumentIntelligenceService:
             re.IGNORECASE | re.DOTALL,
         ),
     )
+
+    # ── Header-aware patterns: look for "Sayı : CODE", "Tarih: DD.MM.YYYY" in title block ──
+    _HEADER_SAYI = re.compile(
+        r"(?:^|\n)\s*(?:sayı|sayi)\s*:\s*([Ee]?[-]?\d+(?:\.\d+)*(?:[-/]\d+)*)\s*\n",
+        re.IGNORECASE,
+    )
+    _HEADER_SAYI_COMPOUND = re.compile(
+        r"(?:^|\n)\s*(?:sayı|sayi)\s*:\s*([A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc\.\-_/]+?)\s*\n",
+        re.IGNORECASE,
+    )
+    # "Evrak Tarih ve Sayısı: DD.MM.YYYY - NNN" format
+    _EVRAK_TARIH_SAYI = re.compile(
+        r"(?:^|\n)\s*(?:evrak\s*tarih\s*(?:ve)?\s*(?:sayı|sayi)(?:sı|si)?)\s*:\s*(\d{2}[\./]\d{2}[\./]\d{4})\s*[-–]\s*([0-9]+)",
+        re.IGNORECASE,
+    )
+    _HEADER_TARIH = re.compile(
+        r"(?:^|\n)\s*(?:tarih)\s*:\s*(\d{2}[\./]\d{2}[\./]\d{4})\s*\n",
+        re.IGNORECASE,
+    )
+    _HEADER_KONU_SINGLE = re.compile(
+        r"(?:^|\n)\s*(?:konu|subject)\s*:\s*(.+?)(?=\n\s*(?:sayı|sayi|tarih|ilgi|referans|ek|dağıtım|dagitim|imza)\s*:|\n\s*\n|\Z)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _HEADER_KONU_MULTILINE = re.compile(
+        r"(?:^|\n)\s*(?:konu|subject)\s*:\s*(.+?)(?=\n\s*(?:sayı|sayi|tarih|ilgi|referans)\s*:|\n\s*\n|\Z)",
+        re.IGNORECASE | re.DOTALL,
+    )
+
     # Trailing-number extractor: from full sayı code take last /NUMBER or -NUMBER
     _SAYI_TRAILING = re.compile(r"[/\-]([0-9]+)\s*$")
     _PROJECT_NAME_PATTERNS = (
@@ -84,6 +112,27 @@ class DocumentIntelligenceService:
         re.compile(r"^\d{2}\.\d{2}\.\d{4}$"),
         re.compile(r"^(?:konu|subject|sayı|sayi|evrak|tarih)\b", re.IGNORECASE),
         re.compile(r"^[0-9./ -]+$"),
+    )
+
+    # ── Contact / footer / address filter patterns ──────────────────────────
+    # Lines matching any of these are NOT attachments.
+    _CONTACT_PATTERNS = (
+        re.compile(r"@"),                                                       # e-posta
+        re.compile(r"www\.", re.IGNORECASE),                                     # web
+        re.compile(r"\.(?:com|gov|org|net|edu|tr)\b", re.IGNORECASE),           # domain
+        re.compile(r"\b(?:telefon|tel|faks|fax|belgegeçer|belgegecer)\s*[:\-]?\s*[\d\s\(\)\+]+", re.IGNORECASE),
+        re.compile(r"\b(?:e[\-\s]?posta|e[\-\s]?mail)\s*[:\-]?", re.IGNORECASE),
+        re.compile(r"\b(?:kep|kayıtlı\s*elektronik)\b", re.IGNORECASE),
+        re.compile(r"\b(?:mah|mahalle)(?:[\.\s]|$)", re.IGNORECASE),
+        re.compile(r"\b(?:cad|cadde)(?:[\.\s]|$)", re.IGNORECASE),
+        re.compile(r"\b(?:sok|sokak)(?:[\.\s]|$)", re.IGNORECASE),
+        re.compile(r"\b(?:apartman|apt|blok|daire|kat)\b", re.IGNORECASE),
+        re.compile(r"\b(?:posta\s*(?:kodu|kodu)|pk)\s*[:\-]?\s*\d", re.IGNORECASE),
+        re.compile(r"\b(?:adres|address)\s*[:\-]", re.IGNORECASE),
+        re.compile(r"\b(?:internet|web)\s*(?:adresi|sayfası|sitesi)?\s*[:\-]?", re.IGNORECASE),
+        re.compile(r"\b(?:bilgi\s*için|iletişim|irtibat)\b", re.IGNORECASE),
+        re.compile(r"\b(?:sayfa\s*\d+|page\s*\d+)\b", re.IGNORECASE),
+        re.compile(r"\b(?:elektronik\s*imza|e[\-\s]?imza)\b", re.IGNORECASE),
     )
 
     def __init__(self):
@@ -404,29 +453,73 @@ class DocumentIntelligenceService:
 
     def parse_letter_text(self, text: str) -> Dict[str, str]:
         normalized = self._normalize_text(text)
+        # First 15 lines considered the header/title-block area
+        header_lines = normalized.split("\n")[:15]
+        header_text = "\n".join(header_lines)
         yazi_no = ""
         yazi_tarih = ""
 
-        for pattern in self._LETTER_DATE_NO_PATTERNS:
-            match = pattern.search(normalized)
-            if not match:
-                continue
-            if pattern is self._LETTER_DATE_NO_PATTERNS[0]:
-                # Pattern 1: date + trailing number
-                yazi_tarih, yazi_no = match.group(1), match.group(2)
-            elif pattern is self._LETTER_DATE_NO_PATTERNS[1]:
-                # Pattern 2: full Sayı code
-                full_code = match.group(1).strip()
-                yazi_no = full_code
-                date_m = re.search(r"(\d{2}\.\d{2}\.\d{4})", normalized[:600])
-                yazi_tarih = date_m.group(1) if date_m else ""
-            else:
-                # Pattern 3: legacy digits-first
-                yazi_no, yazi_tarih = match.group(1), match.group(2)
-            break
+        # ── Phase 1: Header-based extraction (most reliable for formal letters) ──
+        # Sayı extraction from header
+        sayi_m = self._HEADER_SAYI.search(header_text)
+        if sayi_m:
+            yazi_no = sayi_m.group(1).strip().upper()
+        else:
+            sayi_m2 = self._HEADER_SAYI_COMPOUND.search(header_text)
+            if sayi_m2:
+                raw = sayi_m2.group(1).strip()
+                # Clean trailing punctuation/fragments
+                raw = re.sub(r'[,;\s]+$', '', raw)
+                yazi_no = raw.upper()
+        # Normalize E- prefix in sayı codes (handle lower case e too)
+        if yazi_no and not yazi_no.startswith("E-") and re.match(r"^E\d", yazi_no, re.IGNORECASE):
+            yazi_no = "E-" + yazi_no[1:]
 
+        # Tarih extraction from header
+        tarih_m = self._HEADER_TARIH.search(header_text)
+        if tarih_m:
+            yazi_tarih = tarih_m.group(1)
+            if yazi_tarih:
+                yazi_tarih = yazi_tarih.replace("/", ".")
+
+        # ── Phase 1b: "Evrak Tarih ve Sayısı: DD.MM.YYYY - NNN" format ──
         if not yazi_no:
-            # Fallback: Just look for Sayı/Evrak no
+            evrak_m = self._EVRAK_TARIH_SAYI.search(header_text)
+            if evrak_m:
+                evrak_tarih = evrak_m.group(1).replace("/", ".")
+                evrak_sayi = evrak_m.group(2)
+                if not yazi_tarih:
+                    yazi_tarih = evrak_tarih
+                yazi_no = evrak_sayi
+
+        # ── Phase 2: Fallback to existing patterns if header didn't match ──
+        if not yazi_no or not yazi_tarih:
+            for pattern in self._LETTER_DATE_NO_PATTERNS:
+                match = pattern.search(normalized)
+                if not match:
+                    continue
+                if pattern is self._LETTER_DATE_NO_PATTERNS[0]:
+                    if not yazi_tarih:
+                        yazi_tarih = match.group(1)
+                    if not yazi_no:
+                        yazi_no = match.group(2)
+                elif pattern is self._LETTER_DATE_NO_PATTERNS[1]:
+                    full_code = match.group(1).strip()
+                    if not yazi_no:
+                        yazi_no = full_code
+                    if not yazi_tarih:
+                        date_m = re.search(r"(\d{2}\.\d{2}\.\d{4})", normalized[:600])
+                        yazi_tarih = date_m.group(1) if date_m else ""
+                else:
+                    if not yazi_no:
+                        yazi_no = match.group(1)
+                    if not yazi_tarih:
+                        yazi_tarih = match.group(2)
+                if yazi_no and yazi_tarih:
+                    break
+
+        # ── Phase 3: Last-resort fallbacks ──
+        if not yazi_no:
             sayi_m = re.search(
                 r"(?:sayı|sayi|evrak\s*no|yazı\s*no|yazi\s*no)\s*[:\-]?\s*([A-Z0-9\xc7\u011e\u0130\xd6\u015e\xdc\.\-_/]+)",
                 normalized,
@@ -434,11 +527,9 @@ class DocumentIntelligenceService:
             )
             if sayi_m:
                 full_code = sayi_m.group(1).strip()
-                # Clean trailing non-alphanumeric chars
                 yazi_no = re.sub(r'[\s\.\-_/]+$', '', full_code)
                 
         if not yazi_tarih:
-            # Fallback: Just look for a date near the top
             date_m = re.search(r"(\d{2}[\./]\d{2}[\./]\d{4})", normalized[:1000])
             if date_m:
                 yazi_tarih = date_m.group(1)
@@ -448,6 +539,17 @@ class DocumentIntelligenceService:
             yazi_tarih = yazi_tarih.replace("/", ".")
 
         konu = self._extract_letter_subject(normalized)
+        if not konu:
+            # Try header-specific multiline subject extraction
+            konu_m = self._HEADER_KONU_MULTILINE.search(header_text)
+            if konu_m:
+                konu = self._clean_text_field(konu_m.group(1), limit=400)
+        if not konu:
+            # Try single-line subject from header
+            konu_m2 = self._HEADER_KONU_SINGLE.search(header_text)
+            if konu_m2:
+                konu = self._clean_text_field(konu_m2.group(1), limit=400)
+
         kurum = self._extract_letter_institution(normalized, konu)
         aciklama = self._build_letter_description(normalized, konu, kurum)
         ekler_listesi = self._extract_letter_attachments_structured(normalized)
@@ -763,14 +865,24 @@ class DocumentIntelligenceService:
         for pattern in self._LETTER_SUBJECT_PATTERNS:
             match = pattern.search(text)
             if match:
-                cleaned = self._clean_text_field(match.group(1), limit=220)
+                raw = match.group(1).strip()
+                # If the subject is very short, try to capture next line too
+                if len(raw) < 20:
+                    m_start = match.end()
+                    remaining = text[m_start:].lstrip()
+                    next_line_end = remaining.find('\n')
+                    if next_line_end > 0 and next_line_end < 200:
+                        continuation = remaining[:next_line_end].strip()
+                        if continuation and len(continuation) > 3:
+                            raw = f"{raw} {continuation}"
+                cleaned = self._clean_text_field(raw, limit=400)
                 if cleaned:
                     return cleaned
 
         for line in lines[:12]:
             folded = line.casefold()
             if " hakkında" in folded or " hakkinda" in folded:
-                cleaned = self._clean_text_field(line, limit=220)
+                cleaned = self._clean_text_field(line, limit=400)
                 if cleaned:
                     return cleaned
         return ""
@@ -788,6 +900,13 @@ class DocumentIntelligenceService:
         r"(\d[-][A-Z][A-Z0-9\-]+(?:\s+\d[-][A-Z][A-Z0-9\-]+)*|\d[-][A-Z0-9\-]{3,})",
         re.IGNORECASE,
     )
+
+    def _is_contact_info(self, line: str) -> bool:
+        """Bir satırın iletişim/temas bilgisi olup olmadığını kontrol et."""
+        for pattern in self._CONTACT_PATTERNS:
+            if pattern.search(line):
+                return True
+        return False
 
     def _extract_letter_attachments_structured(self, text: str) -> list:
         """
@@ -815,25 +934,30 @@ class DocumentIntelligenceService:
                 continue
             lower = ls.casefold()
 
-            # Detect section header
-            if re.match(r"^ek(?:ler)?\s*[:;]", lower):
+            # Detect section header (only when not already inside ekler)
+            if not in_ekler and re.match(r"^(?:ek|ekler)[\s:;\-]", lower):
                 in_ekler = True
                 # Content after the colon on the same line
                 after = ls.split(":", 1)[1].strip() if ":" in ls else ""
-                if after:
+                if after and not self._is_contact_info(after):
                     raw_ekler.append(after)
                 continue
 
             if in_ekler:
                 # Stop section on known other headers
+                # Handles both Turkish dotted/dotless I via explicit alternation
                 if re.match(
-                    r"^(?:ilgi|referans|da\u011f\u0131t\u0131m|dagitim|konu|say\u0131|sayi|imza)\s*[:;]",
-                    lower,
+                    r"^(?:ilgi|referans|da[ğg]it[iıİ]m|da[ğg][ıiİ]t[ıiİ]m|DAĞITIM|konu|say[ıiİ]|sayi|imza|bilgi|not)\s*[:;]",
+                    ls,  # use original (not casefolded) for Turkish uppercase matching
                 ):
                     break
-                    
-                # Skip footer / signature boilerplate lines
-                if any(word in lower for word in ["elektronik imza", "adres", "telefon", "fax", "faks", "posta", "internet", "bilgi için", "sayfa"]):
+
+                # Skip contact / footer boilerplate lines using regex patterns
+                if self._is_contact_info(ls):
+                    continue
+
+                # Skip lines matching legacy keyword filter (backward compat)
+                if any(word in lower for word in ["elektronik imza", "adres", "sayfa"]):
                     continue
                     
                 # Over-indented (signature block) — stop
@@ -849,6 +973,9 @@ class DocumentIntelligenceService:
             # Strip leading ek-number prefix
             cleaned = self._EK_PREFIX.sub("", raw).strip()
             if not cleaned or len(cleaned) < 3:
+                continue
+            # Skip lines that are too short and have no digit or code-like content
+            if len(cleaned) < 5 and not re.search(r"[0-9]", cleaned):
                 continue
             sira += 1
 

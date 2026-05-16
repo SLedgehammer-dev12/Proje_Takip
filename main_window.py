@@ -823,24 +823,25 @@ class AnaPencere(QMainWindow):
         except Exception:
             pass
 
-    def _invalidate_filter_cache_and_reload(self, keep_project_id: Optional[int] = None, keep_rev_id: Optional[int] = None):
+    def _invalidate_filter_cache_and_reload(self, keep_project_id: Optional[int] = None, keep_rev_id: Optional[int] = None, force_sync: bool = False):
         """Clear filter cache and re-load projects to ensure UI doesn't show stale results."""
         try:
             try:
                 if self.preview_render_service:
                     self.preview_render_service.clear_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.debug(f"Preview render cache clear failed: {e}")
+
             if getattr(self, "filter_manager", None):
                 try:
                     self.filter_manager.clear_cache()
-                except Exception:
-                    pass
-            # Optionally preserve selection: set secili_proje_id so projeleri_yukle can reselect
-            # Determine which project/revision to preserve - use provided keep values, else fallback to current selections
+                except Exception as e:
+                    self.logger.debug(f"Filter manager cache clear failed: {e}")
+
+            # Determine which project/revision to preserve
+            preserve_proj = keep_project_id if keep_project_id is not None else getattr(self, 'secili_proje_id', None)
+            preserve_rev = None
             try:
-                preserve_proj = keep_project_id if keep_project_id is not None else getattr(self, 'secili_proje_id', None)
-                # If keep_rev_id not provided, attempt to get current selected rev id from the UI
                 if keep_rev_id is not None:
                     preserve_rev = keep_rev_id
                 else:
@@ -851,60 +852,95 @@ class AnaPencere(QMainWindow):
                         preserve_rev = None
                 if preserve_proj is not None:
                     self.secili_proje_id = preserve_proj
-            except Exception:
+            except Exception as e:
+                self.logger.debug(f"Selection preservation failed: {e}")
                 preserve_proj = getattr(self, 'secili_proje_id', None)
                 preserve_rev = None
-            # Re-load projects which will reapply filters if any are active
+
+            # Re-load projects
+            projects = None
             try:
-                # If we have a specific project to keep but filters may exclude it,
-                # we'll fetch filtered projects and append the preserved project to ensure the UI keeps focus.
-                projects = None
-                try:
-                    if getattr(self, 'filter_manager', None) and len(getattr(self.filter_manager, 'active_filters', [])):
-                        projects = self.filter_manager.get_filtered_projects(sort_by=self.current_project_sort)
-                    else:
-                        projects = self.db.projeleri_listele(sort_by=self.current_project_sort)
-                except Exception:
+                if getattr(self, 'filter_manager', None) and len(getattr(self.filter_manager, 'active_filters', [])):
+                    projects = self.filter_manager.get_filtered_projects(sort_by=self.current_project_sort)
+                else:
                     projects = self.db.projeleri_listele(sort_by=self.current_project_sort)
-
-                # If we need to preserve a project that is not in the list, fetch it and append.
+            except Exception as e:
+                self.logger.warning(f"Filtered project load failed, falling back to full list: {e}")
                 try:
-                    if preserve_proj is not None and all(getattr(p, 'id', None) != preserve_proj for p in (projects or [])):
-                        # Attempt to find the project in the full project list and append it if found
-                        try:
-                            all_projects = self.db.projeleri_listele()
-                        except Exception:
-                            all_projects = []
-                        for ap in all_projects:
-                            if getattr(ap, 'id', None) == preserve_proj:
-                                projects = list(projects or [])
-                                projects.insert(0, ap)
-                                break
-                except Exception:
-                    pass
+                    projects = self.db.projeleri_listele(sort_by=self.current_project_sort)
+                except Exception as e2:
+                    self.logger.error(f"Full project list load also failed: {e2}")
+                    projects = []
 
-                # Display projects via existing helper which applies search box filter on top
+            # Preserve project if not in list
+            try:
+                if preserve_proj is not None and all(getattr(p, 'id', None) != preserve_proj for p in (projects or [])):
+                    try:
+                        all_projects = self.db.projeleri_listele()
+                    except Exception:
+                        all_projects = []
+                    for ap in all_projects:
+                        if getattr(ap, 'id', None) == preserve_proj:
+                            projects = list(projects or [])
+                            projects.insert(0, ap)
+                            break
+            except Exception as e:
+                self.logger.debug(f"Project preservation append failed: {e}")
+
+            # Display projects - use synchronous update for critical changes (flag, delete, etc.)
+            try:
+                self.tum_projeler = projects or []
+                # Apply search filter on top
+                sorgu = (self.arama_kutusu.text() if hasattr(self, "arama_kutusu") else "").strip().lower()
+                if sorgu:
+                    filtered_by_search = [
+                        p for p in (projects or [])
+                        if sorgu in (getattr(p, "proje_kodu", "") or "").lower()
+                        or sorgu in (getattr(p, "proje_ismi", "") or "").lower()
+                        or sorgu in (getattr(p, "hiyerarsi", "") or "").lower()
+                    ]
+                else:
+                    filtered_by_search = projects or []
+
+                # Use ProjectPanel's load_projects directly for synchronous update
+                if hasattr(self, "project_panel") and hasattr(self.project_panel, "load_projects"):
+                    try:
+                        kategoriler = self.db.get_kategoriler()
+                        if hasattr(self.project_panel, "set_categories"):
+                            self.project_panel.set_categories(kategoriler)
+                    except Exception as e:
+                        self.logger.debug(f"Category load for panel failed: {e}")
+
+                    # Force synchronous update for critical changes
+                    if force_sync and hasattr(self.project_panel, "_populate_ui"):
+                        self.project_panel._populate_ui(filtered_by_search, use_batch=False)
+                    else:
+                        self.project_panel.load_projects(filtered_by_search)
+                    self.logger.info(f"Projects reloaded synchronously: {len(filtered_by_search)} projects (force_sync={force_sync})")
+                else:
+                    self._populate_projects_ui(filtered_by_search)
+            except Exception as e:
+                self.logger.error(f"Project display failed: {e}", exc_info=True)
+                # Fallback: direct synchronous populate, NOT async projeleri_yukle()
                 try:
-                    self.display_filtered_projects(projects or [])
-                except Exception:
-                    self.projeleri_yukle()
-            except Exception:
-                pass
-            # If rev_id is provided, try to reselect revision after project reload
+                    self._populate_projects_ui(projects or [])
+                except Exception as e2:
+                    self.logger.error(f"Fallback project display also failed: {e2}", exc_info=True)
+
+            # Reload revision if needed
             try:
                 self.logger.debug(f"_invalidate_filter_cache_and_reload called. keep_project_id={keep_project_id}, keep_rev_id={keep_rev_id}, preserve_proj={preserve_proj}, preserve_rev={preserve_rev}")
                 if preserve_proj is not None and (keep_rev_id is not None or preserve_rev is not None):
                     self.logger.debug(f"_invalidate_filter_cache_and_reload: will reload revisions for project {preserve_proj}")
                     self.revizyonlari_yukle(preserve_proj)
-                    # Prefer explicit keep_rev_id when given, fallback to preserved rev
                     rid = keep_rev_id if keep_rev_id is not None else preserve_rev
                     if rid is not None:
                         self.logger.debug(f"_invalidate_filter_cache_and_reload: attempting _select_revizyon_by_id({rid})")
                         self._select_revizyon_by_id(rid)
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as e:
+                self.logger.debug(f"Revision reload failed: {e}")
+        except Exception as e:
+            self.logger.error(f"_invalidate_filter_cache_and_reload top-level failure: {e}", exc_info=True)
 
     def projeleri_yukle(self):
         """Projeleri arka planda yükle, UI'da kademeli göster."""
@@ -2041,7 +2077,25 @@ class AnaPencere(QMainWindow):
         return _ui_add_menu_action(self, menu, icon, text, callback, shortcut)
 
     def _setup_menubar(self):
-        from ui.main_window_ui import _setup_menubar as _ui_setup_menubar
+        from ui.main_window_ui import (
+            _setup_menubar as _ui_setup_menubar,
+            _setup_file_menu as _ui_setup_file_menu,
+            _setup_project_menu as _ui_setup_project_menu,
+            _setup_revision_menu as _ui_setup_revision_menu,
+            _setup_filter_menu as _ui_setup_filter_menu,
+            _setup_view_menu as _ui_setup_view_menu,
+            _setup_report_menu as _ui_setup_report_menu,
+            _setup_help_menu as _ui_setup_help_menu,
+        )
+
+        # Bind menu setup functions as methods for _setup_menubar to call
+        self._setup_file_menu = lambda menubar: _ui_setup_file_menu(self, menubar)
+        self._setup_project_menu = lambda menubar: _ui_setup_project_menu(self, menubar)
+        self._setup_revision_menu = lambda menubar: _ui_setup_revision_menu(self, menubar)
+        self._setup_filter_menu = lambda menubar: _ui_setup_filter_menu(self, menubar)
+        self._setup_view_menu = lambda menubar: _ui_setup_view_menu(self, menubar)
+        self._setup_report_menu = lambda menubar: _ui_setup_report_menu(self, menubar)
+        self._setup_help_menu = lambda menubar: _ui_setup_help_menu(self, menubar)
 
         return _ui_setup_menubar(self)
 
@@ -2097,10 +2151,7 @@ class AnaPencere(QMainWindow):
 
     def show_user_guide_tab(self):
         from ui.main_window_ui import show_user_guide_tab as _ui_show_guide
-
         return _ui_show_guide(self)
-
-        # original method body moved to ui/main_window_ui.show_user_guide_tab
 
     def show_version_info(self):
         """Sürüm bilgisi ve katkı mesajını göster."""
@@ -2273,12 +2324,15 @@ class AnaPencere(QMainWindow):
 
     def on_revision_selected_from_panel(self, rev: Optional[RevizyonModel]):
         """Bridge method for RevisionPanel selection signal"""
-        # Trigger existing logic
         self.revizyon_secilince_detay_guncelle()
         self.letter_preview_timer.stop()
         self._scheduled_letter_preview_payload = None
         self._update_letter_preview_load_button()
         if rev:
+            if self.preview_state:
+                self.preview_state.show_loading(rev)
+            else:
+                set_widget_text(self.onizleme_etiketi, "Ön izleme yükleniyor...")
             if self.is_performance_mode_enabled():
                 self._queue_letter_preview_for_revision(rev, delay_ms=0, force=False)
             else:
@@ -2287,6 +2341,7 @@ class AnaPencere(QMainWindow):
             self._set_letter_preview_message(
                 "Revizyona ait yazı ön izlemesi burada görünür."
             )
+            self._clear_preview()
         self.preview_timer.start(self._revision_preview_delay_ms)
         try:
             self._update_action_states()
@@ -3137,9 +3192,9 @@ class AnaPencere(QMainWindow):
                     self.revizyonlari_yukle(self.secili_proje_id)
                 # Ensure filter cache is invalidated and projects reloaded
                     try:
-                        self._invalidate_filter_cache_and_reload(keep_project_id=self.secili_proje_id)
-                    except Exception:
-                        pass
+                        self._invalidate_filter_cache_and_reload(keep_project_id=self.secili_proje_id, force_sync=True)
+                    except Exception as e:
+                        self.logger.error(f"Filter cache invalidation after revision delete failed: {e}")
                 QMessageBox.information(self, "Başarılı", "Revizyon başarıyla silindi.")
             else:
                 QMessageBox.critical(self, "Hata", "Revizyon silinemedi.")
@@ -3271,12 +3326,18 @@ class AnaPencere(QMainWindow):
         item = self._get_secili_revizyon_item()
         rev = item.data(0, Qt.UserRole) if item else None
         if rev:
+            # Clear previous preview immediately for responsive UI
+            if self.preview_state:
+                self.preview_state.show_loading(rev)
+            else:
+                set_widget_text(self.onizleme_etiketi, "Ön izleme yükleniyor...")
             if self.is_performance_mode_enabled():
                 self._queue_letter_preview_for_revision(rev, delay_ms=0, force=False)
             else:
                 self._set_letter_preview_message("Yazı ön izlemesi hazırlanıyor...")
         else:
             self._set_letter_preview_message("Revizyona ait yazı ön izlemesi burada görünür.")
+            self._clear_preview()
         self.preview_timer.start(self._revision_preview_delay_ms)
         try:
             self._update_action_states()
@@ -3545,10 +3606,15 @@ class AnaPencere(QMainWindow):
                 return
 
             dokuman_verisi = load_result.document_bytes
+            if not dokuman_verisi:
+                self._clear_revision_preview_only(
+                    "Doküman verisi boş.", revision=secili_revizyon
+                )
+                return
 
             # Log debug info about document size
             try:
-                size_len = len(dokuman_verisi) if dokuman_verisi else 0
+                size_len = len(dokuman_verisi)
                 self.logger.debug(
                     "Preview will render rev_id=%s, dokuman_size=%s bytes, zoom=%s",
                     rev_id,
@@ -3651,6 +3717,18 @@ class AnaPencere(QMainWindow):
             return  # Arayüz temizlendi
 
         current_rev: RevizyonModel = item.data(0, Qt.UserRole)
+        # Letter render errors arrive with rev_id=-1; handle them on the lower panel
+        if rendered_rev_id == -1:
+            try:
+                self.logger.debug(f"_on_image_error: letter render failed, msg={error_msg}")
+            except Exception:
+                pass
+            if hasattr(self, "yazi_onizleme_etiketi"):
+                self._set_letter_preview_message(f"Yazı önizlenemedi.\n{error_msg}")
+                self.yazi_ac_btn.setEnabled(False)
+                self._update_letter_preview_load_button(None)
+            return
+
         if current_rev.id != rendered_rev_id:
             return  # Eski bir hatayı gösterme
         # --- KONTROL BİTTİ ---
@@ -3860,7 +3938,7 @@ class AnaPencere(QMainWindow):
             success = self.db.revizyon_flag_durumu_guncelle(rev.id, not bool(is_flagged))
             if success:
                 self._refresh_current_project(keep_rev_id=rev.id)
-                self._invalidate_filter_cache_and_reload()
+                self._invalidate_filter_cache_and_reload(force_sync=True)
 
     # --- GÜNCELLEME (ADIM 5.3) ---
     def _kategori_gorunumu_context_menu(self, position):
@@ -3936,22 +4014,19 @@ class AnaPencere(QMainWindow):
             menu.addAction("✅ Toplu Onay Yazısı Ekle...", lambda: self._secili_projelere_yazi_ekle("Onay"))
             menu.addAction("⭐ Toplu Notlu Onay Yazısı Ekle...", lambda: self._secili_projelere_yazi_ekle("Notlu Onay"))
             menu.addAction("❌ Toplu Red Yazısı Ekle...", lambda: self._secili_projelere_yazi_ekle("Red"))
-            # Red Flag yönetimi (her projede göster; işaretli ise kaldır, değilse ekle)
-            is_flagged = int(getattr(proje, "is_flagged", 0) or 0)
-            if is_flagged:
-                def _clear_project_flag(pid=proje.id):
-                    if self.db.proje_flag_durumu_guncelle(pid, False):
-                        self._invalidate_filter_cache_and_reload(keep_project_id=pid)
-                        self.logger.info(f"Proje {pid} red flag kaldırıldı.")
-                flag_action = menu.addAction("🚩 Red Flag İşaretini Kaldır")
-                flag_action.triggered.connect(_clear_project_flag)
-            else:
-                def _set_project_flag(pid=proje.id):
-                    if self.db.proje_flag_durumu_guncelle(pid, True):
-                        self._invalidate_filter_cache_and_reload(keep_project_id=pid)
-                        self.logger.info(f"Proje {pid} red flag olarak işaretlendi.")
-                flag_action = menu.addAction("🚩 Hatalı Kayıt Olarak İşaretle")
-                flag_action.triggered.connect(_set_project_flag)
+            # Red Flag: her zaman işaretleme seçeneği göster; kaldırma revizyon tablosu üzerinden yapılır
+            def _set_project_flag(pid=proje.id):
+                try:
+                    revisions = self.db.revizyonlari_getir(pid)
+                    if revisions:
+                        latest = revisions[0]
+                        if self.db.revizyon_flag_durumu_guncelle(latest.id, True):
+                            self._invalidate_filter_cache_and_reload(keep_project_id=pid, force_sync=True)
+                            self.logger.info(f"Proje {pid} en son revizyonu ({latest.id}) red flag olarak işaretlendi.")
+                except Exception as e:
+                    self.logger.error(f"Proje flag ekleme hatası: {e}")
+            flag_action = menu.addAction("🚩 Hatalı Kayıt Olarak İşaretle")
+            flag_action.triggered.connect(_set_project_flag)
 
         menu.exec(self.proje_listesi_widget.viewport().mapToGlobal(position))
 
@@ -3996,7 +4071,7 @@ class AnaPencere(QMainWindow):
             # Call DB helper and reload
             success = self.db.kategoriyi_sil(kategori_id)
             if success:
-                self._invalidate_filter_cache_and_reload()
+                self._invalidate_filter_cache_and_reload(force_sync=True)
                 QMessageBox.information(self, "Başarılı", "Kategori silindi ve projeler yeniden atandı.")
             else:
                 QMessageBox.critical(self, "Hata", "Kategori silinirken hata oluştu.")
@@ -4249,7 +4324,7 @@ class AnaPencere(QMainWindow):
                 self._refresh_current_project(keep_rev_id=target_rev_id)
             except Exception:
                 try:
-                    self._invalidate_filter_cache_and_reload(keep_project_id=proje_id, keep_rev_id=target_rev_id if "target_rev_id" in locals() else None)
+                    self._invalidate_filter_cache_and_reload(keep_project_id=proje_id, keep_rev_id=target_rev_id if "target_rev_id" in locals() else None, force_sync=True)
                 except Exception:
                     self.yenile(keep_rev_id=target_rev_id if "target_rev_id" in locals() else None, keep_project_id=proje_id)
 
@@ -5152,7 +5227,7 @@ class AnaPencere(QMainWindow):
                         return
 
                 # Başarılı ise listeyi yenile ve filtre cache temizle
-                self._invalidate_filter_cache_and_reload()
+                self._invalidate_filter_cache_and_reload(force_sync=True)
 
                 # Yeni eklenen/düzenlenen projeyi seç
                 if proje_id:
@@ -5602,257 +5677,210 @@ class AnaPencere(QMainWindow):
                 self, "Hata", f"Revizyon düzenlenirken hata oluştu: {e}"
             )
 
+    def _update_revision_core_fields(self, rev_id, veri):
+        """Update basic revision fields in database"""
+        self.db.cursor.execute(
+            """
+            UPDATE revizyonlar 
+            SET revizyon_kodu = ?,
+                aciklama = ?,
+                tse_gonderildi = ?,
+                tse_yazi_no = ?,
+                tse_yazi_tarih = ?,
+                yazi_konu = ?,
+                yazi_kurum = ?
+            WHERE id = ?
+        """,
+            (
+                veri.get("revizyon_kodu"),
+                veri.get("aciklama"),
+                veri.get("tse_gonderildi", 0),
+                veri.get("tse_yazi_no"),
+                veri.get("tse_yazi_tarih"),
+                veri.get("yazi_konu"),
+                veri.get("yazi_kurum"),
+                rev_id,
+            ),
+        )
+
+    def _infer_yazi_no_from_filename(self, dosya_yolu, rev_id, yazi_no_field="gelen_yazi_no", tarih_field="gelen_yazi_tarih"):
+        """Try to infer yazı no from filename using utility function"""
+        try:
+            from utils import dosyadan_tarih_sayi_cikar
+            bilgiler = dosyadan_tarih_sayi_cikar(os.path.basename(dosya_yolu))
+            if bilgiler and bilgiler.get("sayi"):
+                yazi_no = bilgiler.get("sayi")
+                self.db.cursor.execute(
+                    f"UPDATE revizyonlar SET {yazi_no_field} = ?, {tarih_field} = ? WHERE id = ?",
+                    (yazi_no, bilgiler.get("tarih"), rev_id),
+                )
+                self.logger.info(f"Yazı no filename'dan tahmin edildi: {yazi_no} (rev_id={rev_id})")
+                return yazi_no, bilgiler.get("tarih")
+        except Exception:
+            pass
+        return None, None
+
+    def _save_and_preview_letter(self, yazi_no, dosya_yolu, dosya_turu, rev_id, yazi_tarih, is_onay_red=False):
+        """Save letter document to DB and trigger preview"""
+        try:
+            with open(dosya_yolu, "rb") as f:
+                dok_veri = f.read()
+                if is_onay_red and not self._confirm_if_suspicious_letter_doc(rev_id, dok_veri, dosya_turu):
+                    self.logger.info(f"Şüpheli {dosya_turu} yükleme kullanıcı tarafından iptal edildi (rev_id={rev_id})")
+                    return None
+            if dok_veri is not None:
+                self.db.yazi_dokumani_kaydet(
+                    yazi_no,
+                    os.path.basename(dosya_yolu),
+                    dok_veri,
+                    dosya_turu,
+                    yazi_tarih,
+                )
+                self.logger.info(f"{dosya_turu.capitalize()} yazı dokümanı kaydedildi: yazi_no={yazi_no}, rev_id={rev_id}")
+                try:
+                    if hasattr(self, "_start_yazi_render"):
+                        self._start_yazi_render.emit(dok_veri, self.zoom_factor, yazi_no)
+                except Exception:
+                    self.logger.debug("_start_yazi_render emit failed in letter save flow", exc_info=True)
+                return dok_veri
+        except Exception as e:
+            self.logger.error(f"{dosya_turu.capitalize()} yazı dokümanı kaydedilemedi: {e}", exc_info=True)
+        return None
+
+    def _update_incoming_letter(self, rev_id, veri):
+        """Update incoming letter fields and document"""
+        self.db.cursor.execute(
+            """
+            UPDATE revizyonlar 
+            SET gelen_yazi_no = ?,
+                gelen_yazi_tarih = ?,
+                yazi_turu = 'gelen'
+            WHERE id = ?
+        """,
+            (veri.get("gelen_yazi_no"), veri.get("gelen_yazi_tarih"), rev_id),
+        )
+
+        if veri.get("yeni_yazi_dosya_yolu"):
+            yazi_no = veri.get("gelen_yazi_no")
+            gelen_tarih = veri.get("gelen_yazi_tarih")
+            
+            if not yazi_no:
+                yazi_no, inferred_tarih = self._infer_yazi_no_from_filename(
+                    veri.get("yeni_yazi_dosya_yolu"), rev_id
+                )
+                if inferred_tarih:
+                    gelen_tarih = inferred_tarih
+                    
+            if not yazi_no:
+                self.logger.warning(f"Gelen yazı dosyası seçilmiş ancak gelen_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_yazi_dosya_yolu')}")
+            else:
+                self._save_and_preview_letter(yazi_no, veri["yeni_yazi_dosya_yolu"], "gelen", rev_id, gelen_tarih)
+
+    def _update_outgoing_approval_letter(self, rev_id, veri):
+        """Update outgoing approval letter fields and document"""
+        if not veri.get("onay_yazi_no"):
+            return
+            
+        self.db.cursor.execute(
+            """
+            UPDATE revizyonlar 
+            SET onay_yazi_no = ?,
+                onay_yazi_tarih = ?,
+                yazi_turu = 'giden'
+            WHERE id = ?
+        """,
+            (veri.get("onay_yazi_no"), veri.get("onay_yazi_tarih"), rev_id),
+        )
+
+        if veri.get("yeni_onay_dosya_yolu"):
+            onay_no = veri.get("onay_yazi_no")
+            onay_tarih = veri.get("onay_yazi_tarih")
+            
+            if not onay_no:
+                onay_no, inferred_tarih = self._infer_yazi_no_from_filename(
+                    veri.get("yeni_onay_dosya_yolu"), rev_id, "onay_yazi_no", "onay_yazi_tarih"
+                )
+                if inferred_tarih:
+                    onay_tarih = inferred_tarih
+                    
+            if not onay_no:
+                self.logger.warning(f"Onay yazısı dosyası seçilmiş ancak onay_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_onay_dosya_yolu')}")
+            else:
+                self._save_and_preview_letter(onay_no, veri["yeni_onay_dosya_yolu"], "onay", rev_id, onay_tarih, is_onay_red=True)
+
+    def _update_outgoing_rejection_letter(self, rev_id, veri):
+        """Update outgoing rejection letter fields and document"""
+        if not veri.get("red_yazi_no"):
+            return
+            
+        self.db.cursor.execute(
+            """
+            UPDATE revizyonlar 
+            SET red_yazi_no = ?,
+                red_yazi_tarih = ?,
+                yazi_turu = 'giden'
+            WHERE id = ?
+        """,
+            (veri.get("red_yazi_no"), veri.get("red_yazi_tarih"), rev_id),
+        )
+
+        if veri.get("yeni_red_dosya_yolu"):
+            red_no = veri.get("red_yazi_no")
+            red_tarih = veri.get("red_yazi_tarih")
+            
+            if not red_no:
+                red_no, inferred_tarih = self._infer_yazi_no_from_filename(
+                    veri.get("yeni_red_dosya_yolu"), rev_id, "red_yazi_no", "red_yazi_tarih"
+                )
+                if inferred_tarih:
+                    red_tarih = inferred_tarih
+                    
+            if not red_no:
+                self.logger.warning(f"Red yazısı dosyası seçilmiş ancak red_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_red_dosya_yolu')}")
+            else:
+                self._save_and_preview_letter(red_no, veri["yeni_red_dosya_yolu"], "red", rev_id, red_tarih, is_onay_red=True)
+
+    def _update_revision_document(self, rev_id, veri):
+        """Update revision document and invalidate cache"""
+        if not veri.get("yeni_rev_dosya_yolu"):
+            return
+            
+        with open(veri["yeni_rev_dosya_yolu"], "rb") as f:
+            dosya_verisi = f.read()
+            dosya_adi = os.path.basename(veri["yeni_rev_dosya_yolu"])
+            
+        updated = self.db.dokumani_guncelle(rev_id, dosya_adi, dosya_verisi)
+        self.logger.debug(f"dokumani_guncelle returned {updated} for rev_id={rev_id}")
+        
+        try:
+            if hasattr(self, "_start_pdf_render"):
+                self._start_pdf_render.emit(dosya_verisi, self.zoom_factor, rev_id)
+        except Exception:
+            self.logger.debug("_start_pdf_render emit failed in rev update flow", exc_info=True)
+            
+        try:
+            if self.preview_render_service:
+                self.preview_render_service.invalidate_revision(rev_id)
+        except Exception:
+            pass
+
     def _revizyon_guncelle_db(self, rev_id, veri, yazi_turu):
         """Revizyon verilerini veritabanında güncelle"""
-        # Permission check (defensive)
         if not self.auth_service.has_permission('write'):
             self.logger.warning("Unauthorized attempt to update revision")
             return
         
         try:
-            # Temel alanları güncelle (revizyon_kodu dahil)
-            self.db.cursor.execute(
-                """
-                UPDATE revizyonlar 
-                SET revizyon_kodu = ?,
-                    aciklama = ?,
-                    tse_gonderildi = ?,
-                    tse_yazi_no = ?,
-                    tse_yazi_tarih = ?,
-                    yazi_konu = ?,
-                    yazi_kurum = ?
-                WHERE id = ?
-            """,
-                (
-                    veri.get("revizyon_kodu"),
-                    veri.get("aciklama"),
-                    veri.get("tse_gonderildi", 0),
-                    veri.get("tse_yazi_no"),
-                    veri.get("tse_yazi_tarih"),
-                    veri.get("yazi_konu"),
-                    veri.get("yazi_kurum"),
-                    rev_id,
-                ),
-            )
+            self._update_revision_core_fields(rev_id, veri)
 
-            # Gelen yazı alanlarını güncelle (sadece gelen türündeyse)
             if yazi_turu == "gelen":
-                self.db.cursor.execute(
-                    """
-                    UPDATE revizyonlar 
-                    SET gelen_yazi_no = ?,
-                        gelen_yazi_tarih = ?,
-                        yazi_turu = 'gelen'
-                    WHERE id = ?
-                """,
-                    (veri.get("gelen_yazi_no"), veri.get("gelen_yazi_tarih"), rev_id),
-                )
-
-                # Gelen yazı dokümanı güncellemesi varsa
-                if veri.get("yeni_yazi_dosya_yolu"):
-                    # Ensure we have a yazi_no; try to infer from filename if missing
-                    yazi_no = veri.get("gelen_yazi_no")
-                    if not yazi_no:
-                        # Try to infer from filename
-                        try:
-                            from utils import dosyadan_tarih_sayi_cikar
-                            bilgiler = dosyadan_tarih_sayi_cikar(os.path.basename(veri.get("yeni_yazi_dosya_yolu")))
-                            if bilgiler and bilgiler.get("sayi"):
-                                yazi_no = bilgiler.get("sayi")
-                                # also update the DB's revizyon row with the inferred yazi_no
-                                self.db.cursor.execute(
-                                    "UPDATE revizyonlar SET gelen_yazi_no = ?, gelen_yazi_tarih = ? WHERE id = ?",
-                                    (yazi_no, bilgiler.get("tarih"), rev_id),
-                                )
-                                self.logger.info(f"Gelen yazı no filename'dan tahmin edildi: {yazi_no} (rev_id={rev_id})")
-                        except Exception:
-                            pass
-                    if not yazi_no:
-                        self.logger.warning(f"Gelen yazı dosyası seçilmiş ancak gelen_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_yazi_dosya_yolu')}")
-                    else:
-                        try:
-                            with open(veri["yeni_yazi_dosya_yolu"], "rb") as f:
-                                dok_veri = f.read()
-                                saved = self.db.yazi_dokumani_kaydet(
-                                    yazi_no,
-                                    os.path.basename(veri["yeni_yazi_dosya_yolu"]),
-                                    dok_veri,
-                                    "gelen",
-                                    veri.get("gelen_yazi_tarih"),
-                                )
-                                self.logger.info(f"Gelen yazı dokümanı kaydedildi: yazi_no={yazi_no}, result={saved}, rev_id={rev_id}")
-                                # Trigger preview for the uploaded letter doc if available
-                                try:
-                                    if hasattr(self, "_start_yazi_render"):
-                                        self._start_yazi_render.emit(dok_veri, self.zoom_factor, yazi_no)
-                                except Exception:
-                                    self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
-                        except Exception as e:
-                            self.logger.error(f"Gelen yazı dokümanı kaydedilemedi: {e}", exc_info=True)
-                            # Trigger preview for the uploaded letter doc if available
-                            try:
-                                if hasattr(self, "_start_yazi_render"):
-                                    self._start_yazi_render.emit(dok_veri, self.zoom_factor, veri.get("gelen_yazi_no"))
-                            except Exception:
-                                self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
-
-            # Giden yazı alanlarını güncelle (sadece giden türündeyse)
+                self._update_incoming_letter(rev_id, veri)
             elif yazi_turu == "giden":
-                # Onay yazısı güncellemesi
-                if veri.get("onay_yazi_no"):
-                    self.db.cursor.execute(
-                        """
-                        UPDATE revizyonlar 
-                        SET onay_yazi_no = ?,
-                            onay_yazi_tarih = ?,
-                            yazi_turu = 'giden'
-                        WHERE id = ?
-                    """,
-                        (veri.get("onay_yazi_no"), veri.get("onay_yazi_tarih"), rev_id),
-                    )
+                self._update_outgoing_approval_letter(rev_id, veri)
+                self._update_outgoing_rejection_letter(rev_id, veri)
 
-                    if veri.get("yeni_onay_dosya_yolu"):
-                            onay_no = veri.get("onay_yazi_no")
-                            if not onay_no:
-                                try:
-                                    from utils import dosyadan_tarih_sayi_cikar
-                                    bilgiler = dosyadan_tarih_sayi_cikar(os.path.basename(veri.get("yeni_onay_dosya_yolu")))
-                                    if bilgiler and bilgiler.get("sayi"):
-                                        onay_no = bilgiler.get("sayi")
-                                        self.db.cursor.execute(
-                                            "UPDATE revizyonlar SET onay_yazi_no = ?, onay_yazi_tarih = ? WHERE id = ?",
-                                            (onay_no, bilgiler.get("tarih"), rev_id),
-                                        )
-                                        self.logger.info(f"Onay yazı no filename'dan tahmin edildi: {onay_no} (rev_id={rev_id})")
-                                except Exception:
-                                    pass
-                            if not onay_no:
-                                self.logger.warning(f"Onay yazısı dosyası seçilmiş ancak onay_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_onay_dosya_yolu')}")
-                            else:
-                                dok_veri = None
-                                try:
-                                    with open(veri["yeni_onay_dosya_yolu"], "rb") as f:
-                                        dok_veri = f.read()
-                                        if not self._confirm_if_suspicious_letter_doc(
-                                            rev_id, dok_veri, "onay yazısı"
-                                        ):
-                                            self.logger.info(
-                                                f"Şüpheli onay yazısı yükleme kullanıcı tarafından iptal edildi (rev_id={rev_id})"
-                                            )
-                                            dok_veri = None
-                                    if dok_veri is not None:
-                                        self.db.yazi_dokumani_kaydet(
-                                            onay_no,
-                                            os.path.basename(veri["yeni_onay_dosya_yolu"]),
-                                            dok_veri,
-                                            "onay",
-                                            veri.get("onay_yazi_tarih"),
-                                        )
-                                        try:
-                                            if hasattr(self, "_start_yazi_render"):
-                                                self._start_yazi_render.emit(dok_veri, self.zoom_factor, onay_no)
-                                        except Exception:
-                                            self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
-                                except Exception as e:
-                                    self.logger.error(f"Onay yazı dokümanı kaydedilemedi: {e}", exc_info=True)
-                                # Trigger preview if possible
-                                try:
-                                    if dok_veri is not None and hasattr(self, "_start_yazi_render"):
-                                        self._start_yazi_render.emit(dok_veri, self.zoom_factor, veri.get("onay_yazi_no"))
-                                except Exception:
-                                    self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
-
-                # Red yazısı güncellemesi
-                if veri.get("red_yazi_no"):
-                    self.db.cursor.execute(
-                        """
-                        UPDATE revizyonlar 
-                        SET red_yazi_no = ?,
-                            red_yazi_tarih = ?,
-                            yazi_turu = 'giden'
-                        WHERE id = ?
-                    """,
-                        (veri.get("red_yazi_no"), veri.get("red_yazi_tarih"), rev_id),
-                    )
-
-                    if veri.get("yeni_red_dosya_yolu"):
-                            red_no = veri.get("red_yazi_no")
-                            if not red_no:
-                                try:
-                                    from utils import dosyadan_tarih_sayi_cikar
-                                    bilgiler = dosyadan_tarih_sayi_cikar(os.path.basename(veri.get("yeni_red_dosya_yolu")))
-                                    if bilgiler and bilgiler.get("sayi"):
-                                        red_no = bilgiler.get("sayi")
-                                        self.db.cursor.execute(
-                                            "UPDATE revizyonlar SET red_yazi_no = ?, red_yazi_tarih = ? WHERE id = ?",
-                                            (red_no, bilgiler.get("tarih"), rev_id),
-                                        )
-                                        self.logger.info(f"Red yazı no filename'dan tahmin edildi: {red_no} (rev_id={rev_id})")
-                                except Exception:
-                                    pass
-                            if not red_no:
-                                self.logger.warning(f"Red yazısı dosyası seçilmiş ancak red_yazi_no boş. Dosya kaydedilmeyecek: {veri.get('yeni_red_dosya_yolu')}")
-                            else:
-                                dok_veri = None
-                                try:
-                                    with open(veri["yeni_red_dosya_yolu"], "rb") as f:
-                                        dok_veri = f.read()
-                                        if not self._confirm_if_suspicious_letter_doc(
-                                            rev_id, dok_veri, "red yazısı"
-                                        ):
-                                            self.logger.info(
-                                                f"Şüpheli red yazısı yükleme kullanıcı tarafından iptal edildi (rev_id={rev_id})"
-                                            )
-                                            dok_veri = None
-                                    if dok_veri is not None:
-                                        self.db.yazi_dokumani_kaydet(
-                                            red_no,
-                                            os.path.basename(veri["yeni_red_dosya_yolu"]),
-                                            dok_veri,
-                                            "red",
-                                            veri.get("red_yazi_tarih"),
-                                        )
-                                        try:
-                                            if hasattr(self, "_start_yazi_render"):
-                                                self._start_yazi_render.emit(dok_veri, self.zoom_factor, red_no)
-                                        except Exception:
-                                            self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
-                                except Exception as e:
-                                    self.logger.error(f"Red yazı dokümanı kaydedilemedi: {e}", exc_info=True)
-                                # Trigger preview if possible
-                                try:
-                                    if dok_veri is not None and hasattr(self, "_start_yazi_render"):
-                                        self._start_yazi_render.emit(dok_veri, self.zoom_factor, veri.get("red_yazi_no"))
-                                except Exception:
-                                    self.logger.debug("_start_yazi_render emit failed in rev update flow", exc_info=True)
-
-            # Revizyon dokümanı güncellemesi (her iki tür için de)
-            if veri.get("yeni_rev_dosya_yolu"):
-                # Yeni revizyon dokümanı verisi veritabanındaki dokumanlar tablosunda saklanır.
-                # Revizyonlar tablosunda artık 'dokuman' alanı yok; db helper kullanarak güncelleme yap.
-                with open(veri["yeni_rev_dosya_yolu"], "rb") as f:
-                    dosya_verisi = f.read()
-                    dosya_adi = os.path.basename(veri["yeni_rev_dosya_yolu"])
-                try:
-                    # Use the DB helper method to update dokumanlar.
-                    updated = self.db.dokumani_guncelle(rev_id, dosya_adi, dosya_verisi)
-                    self.logger.debug(f"dokumani_guncelle returned {updated} for rev_id={rev_id}")
-                    # Try to emit the preview for the updated rev document
-                    try:
-                        if hasattr(self, "_start_pdf_render"):
-                            self._start_pdf_render.emit(dosya_verisi, self.zoom_factor, rev_id)
-                    except Exception:
-                        self.logger.debug("_start_pdf_render emit failed in rev update flow", exc_info=True)
-                    # Invalidate per-revision dokuman cache so preview updates on selection
-                    try:
-                        # Ensure the cache is cleared for this reviziÌ‡yon regardless of previous row existence
-                        if self.preview_render_service:
-                            self.preview_render_service.invalidate_revision(rev_id)
-                    except Exception:
-                        pass
-                except Exception as e:
-                    self.logger.error(f"Doküman güncellemesi başarısız: {e}")
-                    raise
+            self._update_revision_document(rev_id, veri)
+            
             self.db.conn.commit()
             self.logger.info(f"Revizyon {rev_id} başarıyla güncellendi ({yazi_turu})")
 
@@ -5892,7 +5920,7 @@ class AnaPencere(QMainWindow):
                     self.revizyon_agaci.clear()
                     self.detaylari_temizle()
                     self._clear_preview()
-                    self._invalidate_filter_cache_and_reload()
+                    self._invalidate_filter_cache_and_reload(force_sync=True)
                     QMessageBox.information(
                         self, "Başarılı", "Proje başarıyla silindi."
                     )

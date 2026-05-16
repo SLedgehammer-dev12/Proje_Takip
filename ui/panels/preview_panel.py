@@ -27,19 +27,34 @@ class PreviewPanel(QWidget):
 
     def setup_ui(self):
         """Set up the user interface components."""
+        from ui.styles import normalize_tok_variant, TOK_THEME_VARIANTS
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
+        # Resolve theme palette
+        current_variant = getattr(self.window(), "_tok_variant", "light")
+        theme_key = normalize_tok_variant(current_variant)
+        palette = TOK_THEME_VARIANTS[theme_key]["palette"]
+        text_color = palette.get("TEXT", "#0d1117")
+        muted_color = palette.get("MUTED", "#5a6575")
+        surface_color = palette.get("SURFACE", "#ffffff")
+        bg_light = palette.get("BG_LIGHT", "#f5f7fa")
+
         self.baslik_etiketi = QLabel("<b>🔍 Doküman Ön İzleme</b>")
-        self.baslik_etiketi.setStyleSheet("font-size: 11pt; color: #212529;")
+        self.baslik_etiketi.setStyleSheet(
+            f"font-size: 11pt; color: {text_color};"
+        )
         layout.addWidget(self.baslik_etiketi)
 
         # Durum metni
         self.onizleme_etiketi = QLabel("Bir revizyon seçerek dokümanı ön izleyin.")
         self.onizleme_etiketi.setAlignment(Qt.AlignCenter)
         self.onizleme_etiketi.setWordWrap(True)
-        self.onizleme_etiketi.setStyleSheet("color: #777; font-size: 10pt;")
+        self.onizleme_etiketi.setStyleSheet(
+            f"color: {muted_color}; font-size: 10pt;"
+        )
         layout.addWidget(self.onizleme_etiketi)
 
         # PDF Viewer (ScrollArea içinde Label)
@@ -55,27 +70,27 @@ class PreviewPanel(QWidget):
         self.goruntule_btn.setFixedHeight(30)
         self.goruntule_btn.setCursor(Qt.PointingHandCursor)
         self.goruntule_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #ffffff;
-                color: #2f3542;
+            f"""
+            QPushButton {{
+                background-color: {surface_color};
+                color: {text_color};
                 border: 1px solid #d9dee7;
                 border-radius: 8px;
                 padding: 4px 10px;
                 font-weight: 600;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #eaf4ff;
                 border-color: #6baed6;
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: #d0e8fb;
-            }
-            QPushButton:disabled {
-                background-color: #f4f6f9;
-                color: #9aa3b2;
+            }}
+            QPushButton:disabled {{
+                background-color: {bg_light};
+                color: {muted_color};
                 border-color: #e6e9ef;
-            }
+            }}
             """
         )
         self.goruntule_btn.clicked.connect(self._on_view_clicked)
