@@ -244,6 +244,8 @@ class ProjectPanel(QWidget):
                 except Exception:
                     pass
             item.setData(Qt.UserRole, proje)
+            if is_flagged:
+                item.setToolTip("🚩 Hatalı kayıt işareti bulunuyor. Detay için revizyon tablosunu kontrol edin.")
             if color:
                 item.setBackground(QBrush(color))
             if text_color:
@@ -262,6 +264,8 @@ class ProjectPanel(QWidget):
                 except Exception:
                     pass
             t_item.setData(0, Qt.UserRole, proje)
+            if is_flagged:
+                t_item.setToolTip(0, "🚩 Hatalı kayıt işareti bulunuyor. Detay için revizyon tablosunu kontrol edin.")
 
             if color:
                 t_item.setBackground(0, QBrush(color))

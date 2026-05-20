@@ -1,5 +1,18 @@
 PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.2.2 ---
+  * RED FLAG SEBEP SİSTEMİ: Revizyon işaretleme artık sebep, kullanıcı ve tarih bilgisiyle kaydediliyor. İşaretleme sırasında sebep girişi zorunlu.
+  * RED FLAG DIALOG: İşaret kaldırılırken mevcut sebep, kullanıcı ve tarih bilgisi gösteriliyor.
+  * RED FLAG DASHBOARD: Ana sekme çubuğuna "🚩 Red Flag" sekmesi eklendi; tüm işaretli revizyonlar tablo halinde listeleniyor.
+  * RED FLAG FİLTRELEME: Gelişmiş filtreleme menüsüne "Kırmızı Bayrak (Red Flag)" filtresi eklendi; Evet/Hayır seçeneği ile projeler flag durumuna göre filtrelenebiliyor.
+  * RED FLAG CANLI ARAMA: Arama çubuğuna "red", "flag", "kırmızı", "bayrak", "hatalı" yazıldığında işaretli projeler listeleniyor.
+  * RED FLAG TOOLTIP: Revizyon tablosunda "Hatalı" sütununda fare ile üzerine gelindiğinde sebep, kullanıcı ve tarih bilgisi görüntüleniyor.
+  * DÜZELTME: Rapor panelindeki "Rapor Oluştur" butonu artık çalışıyor (sinyal bağlantısı eklendi).
+  * DÜZELTME: Dead code temizliği - report_service.py'de erişilemez 42 satır kod kaldırıldı.
+  * DÜZELTME: Eksik yazi_render sinyal bağlantıları eklendi (main_controller.py).
+  * DÜZELTME: Animasyon bellek sızıntısı giderildi (QGraphicsOpacityEffect birikmesi).
+  * GÜVENLİK: Varsayılan kullanıcı şifreleri PROJETAKIP_ADMIN_USER/PASS ortam değişkenlerinden okunabiliyor.
+  * TEST: Tüm mevcut testler başarıyla geçiyor; geriye dönük uyumluluk korunuyor.
 --- Sürüm: v3.2.1 ---
   * ARAYÜZ DÜZELTME: Menüler, sıralama combo'su, filtre butonları ve arama çubuğu layout hatası giderilerek tüm temalarda görünür hale getirildi.
   * RED FLAG YENİDEN YAPILANDIRMA: Proje listesinde sadece işaretleme yapılıyor; kaldırma revizyon tablosu sağ tık menüsü üzerinden. İşaretleme en son revizyona uygulanıyor.

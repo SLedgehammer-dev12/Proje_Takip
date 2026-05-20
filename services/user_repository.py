@@ -5,6 +5,7 @@ Extracted from database.py to reduce coupling and improve testability.
 
 import datetime
 import logging
+import os
 from typing import Any, Dict, Optional
 
 try:
@@ -93,20 +94,31 @@ class UserRepository:
     # Initial user seeding
     # -------------------------------------------------------------------------
 
-    _INITIAL_USERS = [
-        {
-            "username": "alperb.yilmaz",
-            "password": "Botas.2025",
-            "full_name": "Alper Berkan Yılmaz",
-            "role": "admin",
-        },
-        {
-            "username": "omer.erbas",
-            "password": "Botas.2025",
-            "full_name": "Ömer Erbaş",
-            "role": "admin",
-        },
-    ]
+    def _get_initial_user_credentials(self):
+        users_from_env = os.environ.get("PROJETAKIP_INITIAL_USERS", "")
+        if users_from_env:
+            import json
+            try:
+                return json.loads(users_from_env)
+            except Exception as e:
+                self.logger.warning("PROJETAKIP_INITIAL_USERS parse edilemedi: %s", e)
+
+        return [
+            {
+                "username": os.environ.get("PROJETAKIP_ADMIN_USER", "alperb.yilmaz"),
+                "password": os.environ.get("PROJETAKIP_ADMIN_PASS", "Botas.2025"),
+                "full_name": "Alper Berkan Yılmaz",
+                "role": "admin",
+            },
+            {
+                "username": os.environ.get("PROJETAKIP_ADMIN_USER_2", "omer.erbas"),
+                "password": os.environ.get("PROJETAKIP_ADMIN_PASS_2", "Botas.2025"),
+                "full_name": "Ömer Erbaş",
+                "role": "admin",
+            },
+        ]
+
+    _INITIAL_USERS = None
 
     def create_initial_users(self):
         """Create initial users if users table is empty, or fix broken hashes."""
@@ -115,7 +127,7 @@ class UserRepository:
             return
 
         try:
-            for user_data in self._INITIAL_USERS:
+            for user_data in self._get_initial_user_credentials():
                 existing = self.get_by_username(user_data["username"])
                 needs_upsert = False
 

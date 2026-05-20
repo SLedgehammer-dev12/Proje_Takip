@@ -16,6 +16,11 @@ class FadeAnimation:
     @staticmethod
     def fade_in(widget: QWidget, duration: int = 300):
         """Fade in a widget"""
+        prev_effect = widget.graphicsEffect()
+        if isinstance(prev_effect, QGraphicsOpacityEffect):
+            prev_effect.setParent(None)
+            prev_effect.deleteLater()
+
         effect = QGraphicsOpacityEffect(widget)
         widget.setGraphicsEffect(effect)
 
@@ -24,15 +29,21 @@ class FadeAnimation:
         animation.setStartValue(0.0)
         animation.setEndValue(1.0)
         animation.setEasingCurve(QEasingCurve.InOutQuad)
+
+        animation.finished.connect(lambda: widget.setGraphicsEffect(None))
         animation.start()
 
-        # Store reference to prevent garbage collection
         widget._fade_animation = animation
         return animation
 
     @staticmethod
     def fade_out(widget: QWidget, duration: int = 300):
         """Fade out a widget"""
+        prev_effect = widget.graphicsEffect()
+        if isinstance(prev_effect, QGraphicsOpacityEffect):
+            prev_effect.setParent(None)
+            prev_effect.deleteLater()
+
         effect = QGraphicsOpacityEffect(widget)
         widget.setGraphicsEffect(effect)
 
@@ -41,6 +52,8 @@ class FadeAnimation:
         animation.setStartValue(1.0)
         animation.setEndValue(0.0)
         animation.setEasingCurve(QEasingCurve.InOutQuad)
+
+        animation.finished.connect(lambda: widget.setGraphicsEffect(None))
         animation.start()
 
         widget._fade_animation = animation

@@ -35,7 +35,6 @@ class ProjeTakipDB:
         # Connection pool for concurrent access
         self.conn = self._open_connection()
         self.cursor = self.conn.cursor()
-        self._connection_pool = {}
 
         # Initialize Services
         self.user_repo = UserRepository(self)
@@ -236,12 +235,13 @@ class ProjeTakipDB:
 
     def cleanup_connections(self):
         """Close all pooled connections"""
-        for conn in self._connection_pool.values():
-            try:
-                conn.close()
-            except Exception:
-                pass
-        self._connection_pool.clear()
+        pool = getattr(self, "_connection_pool", {})
+        if pool:
+            for conn in pool.values():
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         self.logger.info("Database connection pool temizlendi")
 
     # =============================================================================
@@ -318,6 +318,7 @@ class ProjeTakipDB:
                     tse_gonderildi INTEGER DEFAULT 0, tse_yazi_no TEXT, tse_yazi_tarih TEXT,
                     yazi_turu TEXT DEFAULT 'gelen', yazi_konu TEXT, yazi_kurum TEXT,
                     dosya_eksik INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
+                    flag_reason TEXT, flag_date TIMESTAMP, flag_user TEXT,
                     FOREIGN KEY (proje_id) REFERENCES projeler (id) ON DELETE CASCADE
                 )"""
             )
@@ -527,6 +528,12 @@ class ProjeTakipDB:
                 pending.append("ALTER TABLE revizyonlar ADD COLUMN dosya_eksik INTEGER DEFAULT 0")
             if "is_flagged" not in columns:
                 pending.append("ALTER TABLE revizyonlar ADD COLUMN is_flagged INTEGER DEFAULT 0")
+            if "flag_reason" not in columns:
+                pending.append("ALTER TABLE revizyonlar ADD COLUMN flag_reason TEXT")
+            if "flag_date" not in columns:
+                pending.append("ALTER TABLE revizyonlar ADD COLUMN flag_date TIMESTAMP")
+            if "flag_user" not in columns:
+                pending.append("ALTER TABLE revizyonlar ADD COLUMN flag_user TEXT")
             if not pending:
                 return
 
@@ -1687,7 +1694,7 @@ class ProjeTakipDB:
                        ELSE 0
                    END as takipte_mi,
                     (SELECT t.takip_notu FROM revizyon_takipleri t WHERE t.revizyon_id = r.id LIMIT 1) as takip_notu,
-                    r.yazi_konu, r.yazi_kurum, r.is_flagged
+                    r.yazi_konu, r.yazi_kurum, r.is_flagged, r.flag_reason, r.flag_date, r.flag_user
             FROM revizyonlar r
             WHERE r.proje_id = ?
             ORDER BY r.proje_rev_no DESC
@@ -1936,15 +1943,21 @@ class ProjeTakipDB:
         self.cursor.execute(sorgu.format(where_clause=where_clause))
         return self.cursor.fetchall()
 
-    def revizyon_flag_durumu_guncelle(self, revizyon_id: int, is_flagged: bool) -> bool:
-        """Revizyonun hatalı kayıt (flag) durumunu günceller."""
+    def revizyon_flag_durumu_guncelle(self, revizyon_id: int, is_flagged: bool, flag_reason: Optional[str] = None, flag_user: Optional[str] = None) -> bool:
+        """Revizyonun hatalı kayıt (flag) durumunu günceller. Sebep, tarih ve kullanıcı bilgisiyle birlikte kaydeder."""
         try:
             flag_val = 1 if is_flagged else 0
             with self.transaction():
-                self.cursor.execute(
-                    "UPDATE revizyonlar SET is_flagged = ? WHERE id = ?",
-                    (flag_val, revizyon_id),
-                )
+                if is_flagged:
+                    self.cursor.execute(
+                        "UPDATE revizyonlar SET is_flagged = ?, flag_reason = ?, flag_date = ?, flag_user = ? WHERE id = ?",
+                        (flag_val, flag_reason or "", datetime.datetime.now(), flag_user or "", revizyon_id),
+                    )
+                else:
+                    self.cursor.execute(
+                        "UPDATE revizyonlar SET is_flagged = ? WHERE id = ?",
+                        (flag_val, revizyon_id),
+                    )
             self.logger.info(f"Revizyon flag durumu güncellendi: ID={revizyon_id}, Flag={flag_val}")
             self._clear_query_cache()
             return True

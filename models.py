@@ -83,3 +83,6 @@ class RevizyonModel:
     yazi_konu: Optional[str] = None
     yazi_kurum: Optional[str] = None
     is_flagged: int = 0
+    flag_reason: Optional[str] = None
+    flag_date: Optional[str] = None
+    flag_user: Optional[str] = None

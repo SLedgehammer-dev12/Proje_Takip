@@ -1,0 +1,61 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md", "skill.md"],
+  "agent": {
+    "proje-takip-dev": {
+      "prompt": ".opencode/agents/proje-takip-dev.md",
+      "steps": 20
+    },
+    "red-flag-specialist": {
+      "prompt": ".opencode/agents/red-flag-specialist.md",
+      "steps": 15
+    },
+    "ui-ux-reviewer": {
+      "prompt": ".opencode/agents/ui-ux-reviewer.md",
+      "steps": 10
+    },
+    "release-manager": {
+      "prompt": ".opencode/agents/release-manager.md",
+      "steps": 10
+    }
+  },
+  "skill": {
+    "proje-takip": {
+      "prompt": ".opencode/skills/proje-takip.md"
+    },
+    "pyside6-ui": {
+      "prompt": ".opencode/skills/pyside6-ui.md"
+    },
+    "sqlite-db": {
+      "prompt": ".opencode/skills/sqlite-db.md"
+    }
+  },
+  "subagent": {
+    "explore-code": {
+      "prompt": ".opencode/subagents/explore-code.md"
+    },
+    "review-changes": {
+      "prompt": ".opencode/subagents/review-changes.md"
+    },
+    "verify-release": {
+      "prompt": ".opencode/subagents/verify-release.md"
+    }
+  },
+  "permission": {
+    "edit": "allow",
+    "bash": {
+      "python3 -m pytest*": "allow",
+      "python3 -m py_compile*": "allow",
+      "git push*": "ask",
+      "git tag*": "ask",
+      "gh release*": "ask",
+      "pip install*": "ask",
+      "rm -rf*": "ask",
+      "*": "ask"
+    },
+    "todowrite": "allow",
+    "webfetch": "allow",
+    "question": "allow",
+    "task": "allow"
+  }
+}

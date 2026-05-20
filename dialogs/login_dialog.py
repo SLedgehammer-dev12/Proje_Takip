@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
+from i18n import tr
 
 
 class LoginDialog(QDialog):
@@ -32,7 +33,7 @@ class LoginDialog(QDialog):
         self._presence_refresh_timer.start()
 
     def setup_ui(self):
-        self.setWindowTitle("Proje Takip Sistemi - Giriş")
+        self.setWindowTitle(tr("Proje Takip Sistemi - Giriş"))
         self.setModal(True)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -42,7 +43,7 @@ class LoginDialog(QDialog):
         layout.setSpacing(15)
         layout.setContentsMargins(30, 30, 30, 30)
 
-        title_label = QLabel("Kullanıcı Girişi")
+        title_label = QLabel(tr("Kullanıcı Girişi"))
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
@@ -51,7 +52,7 @@ class LoginDialog(QDialog):
         layout.addWidget(title_label)
 
         subtitle_label = QLabel(
-            "Lütfen kullanıcı bilgilerinizi girin veya misafir olarak devam edin."
+            tr("Lütfen kullanıcı bilgilerinizi girin veya misafir olarak devam edin.")
         )
         subtitle_label.setAlignment(Qt.AlignCenter)
         subtitle_label.setWordWrap(True)
@@ -62,7 +63,7 @@ class LoginDialog(QDialog):
         session_layout = QVBoxLayout(session_frame)
         session_layout.setContentsMargins(12, 12, 12, 12)
         session_layout.setSpacing(8)
-        session_title = QLabel("Aktif Veritabanı Oturumları")
+        session_title = QLabel(tr("Aktif Veritabanı Oturumları"))
         session_title.setAlignment(Qt.AlignCenter)
         session_layout.addWidget(session_title)
         self.session_info_label = QLabel()
@@ -73,17 +74,17 @@ class LoginDialog(QDialog):
 
         layout.addSpacing(10)
 
-        username_label = QLabel("Kullanıcı Adı:")
+        username_label = QLabel(tr("Kullanıcı Adı:"))
         layout.addWidget(username_label)
         self.username_field = QLineEdit()
-        self.username_field.setPlaceholderText("Kullanıcı adınızı girin")
+        self.username_field.setPlaceholderText(tr("Kullanıcı adınızı girin"))
         self.username_field.setMinimumHeight(35)
         layout.addWidget(self.username_field)
 
-        password_label = QLabel("Şifre:")
+        password_label = QLabel(tr("Şifre:"))
         layout.addWidget(password_label)
         self.password_field = QLineEdit()
-        self.password_field.setPlaceholderText("Şifrenizi girin")
+        self.password_field.setPlaceholderText(tr("Şifrenizi girin"))
         self.password_field.setEchoMode(QLineEdit.Password)
         self.password_field.setMinimumHeight(35)
         self.password_field.returnPressed.connect(self.on_login_clicked)
@@ -92,13 +93,13 @@ class LoginDialog(QDialog):
         buttons_layout = QVBoxLayout()
         buttons_layout.setSpacing(10)
 
-        self.login_btn = QPushButton("Giriş Yap")
+        self.login_btn = QPushButton(tr("Giriş Yap"))
         self.login_btn.setMinimumHeight(40)
         self.login_btn.setDefault(True)
         self.login_btn.clicked.connect(self.on_login_clicked)
         buttons_layout.addWidget(self.login_btn)
 
-        self.guest_btn = QPushButton("Misafir Olarak Devam Et")
+        self.guest_btn = QPushButton(tr("Misafir Olarak Devam Et"))
         self.guest_btn.setMinimumHeight(40)
         self.guest_btn.clicked.connect(self.on_guest_clicked)
         buttons_layout.addWidget(self.guest_btn)
@@ -107,7 +108,7 @@ class LoginDialog(QDialog):
         layout.addLayout(buttons_layout)
 
         info_label = QLabel(
-            "<i>Misafir mod: Sadece görüntüleme ve indirme yetkisi</i>"
+            tr("<i>Misafir mod: Sadece görüntüleme ve indirme yetkisi</i>")
         )
         info_label.setAlignment(Qt.AlignCenter)
         info_label.setWordWrap(True)
@@ -136,8 +137,8 @@ class LoginDialog(QDialog):
         if not username or not password:
             QMessageBox.warning(
                 self,
-                "Eksik Bilgi",
-                "Lütfen kullanıcı adı ve şifre girin.",
+                tr("Eksik Bilgi"),
+                tr("Lütfen kullanıcı adı ve şifre girin."),
             )
             return
 
@@ -146,8 +147,8 @@ class LoginDialog(QDialog):
             self._presence_refresh_timer.stop()
             QMessageBox.information(
                 self,
-                "Başarılı",
-                f"Hos geldiniz, {self.auth_service.get_current_display_name()}!",
+                tr("Başarılı"),
+                tr("Hoş geldiniz, {name}!").format(name=self.auth_service.get_current_display_name()),
             )
             self.accept()
             return
@@ -156,9 +157,8 @@ class LoginDialog(QDialog):
         if auth_error.get("code") == "writer_conflict":
             QMessageBox.warning(
                 self,
-                "Veritabanı Kullanımda",
-                f"{auth_error.get('message')}\n\n"
-                "Yazma oturumu serbest kalana kadar misafir olarak devam edebilirsiniz.",
+                tr("Veritabanı Kullanımda"),
+                tr("{message}\n\nYazma oturumu serbest kalana kadar misafir olarak devam edebilirsiniz.").format(message=auth_error.get('message')),
             )
             self.refresh_active_sessions()
             self.guest_btn.setFocus()
@@ -167,9 +167,9 @@ class LoginDialog(QDialog):
         if auth_error.get("code") and auth_error.get("code") != "invalid_credentials":
             QMessageBox.warning(
                 self,
-                "Giriş Başarısız",
+                tr("Giriş Başarısız"),
                 auth_error.get("message")
-                or "Giriş sırasında beklenmeyen bir hata oluştu.",
+                or tr("Giriş sırasında beklenmeyen bir hata oluştu."),
             )
             self.password_field.clear()
             self.password_field.setFocus()
@@ -177,8 +177,8 @@ class LoginDialog(QDialog):
 
         QMessageBox.warning(
             self,
-            "Giriş Başarısız",
-            "Kullanıcı adı veya şifre hatalı.\n\nLütfen tekrar deneyin.",
+            tr("Giriş Başarısız"),
+            tr("Kullanıcı adı veya şifre hatalı.\n\nLütfen tekrar deneyin."),
         )
         self.password_field.clear()
         self.password_field.setFocus()
@@ -186,10 +186,10 @@ class LoginDialog(QDialog):
     def on_guest_clicked(self):
         reply = QMessageBox.question(
             self,
-            "Misafir Modu",
-            "Misafir olarak devam etmek istediğinizden emin misiniz?\n\n"
-            "Misafir modunda sadece görüntüleme ve indirme yetkiniz olacak.\n"
-            "Düzenleme, ekleme ve silme işlemleri yapamayacaksınız.",
+            tr("Misafir Modu"),
+            tr("Misafir olarak devam etmek istediğinizden emin misiniz?\n\n"
+               "Misafir modunda sadece görüntüleme ve indirme yetkiniz olacak.\n"
+               "Düzenleme, ekleme ve silme işlemleri yapamayacaksınız."),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -204,11 +204,11 @@ class LoginDialog(QDialog):
         try:
             sessions = self.auth_service.get_active_sessions(include_self=False)
         except Exception:
-            self.session_info_label.setText("Aktif oturum bilgisi alınamadı.")
+            self.session_info_label.setText(tr("Aktif oturum bilgisi alınamadı."))
             return
 
         if not sessions:
-            self.session_info_label.setText("Aktif oturum görünmüyor.")
+            self.session_info_label.setText(tr("Aktif oturum görünmüyor."))
             return
 
         writer_sessions = [session for session in sessions if session.get("can_write")]
@@ -219,16 +219,16 @@ class LoginDialog(QDialog):
             labels = []
             for session in writer_sessions:
                 display_name = html.escape(
-                    session.get("display_name") or session.get("username") or "Bilinmeyen"
+                    session.get("display_name") or session.get("username") or tr("Bilinmeyen")
                 )
                 host_name = html.escape(session.get("host") or "?")
                 labels.append(f"{display_name} <i>({host_name})</i>")
-            lines.append("<b>Yazma yetkili aktif kullanici:</b> " + ", ".join(labels))
+            lines.append(tr("<b>Yazma yetkili aktif kullanici:</b> ") + ", ".join(labels))
         else:
-            lines.append("<b>Yazma yetkili aktif kullanici:</b> Yok")
+            lines.append(tr("<b>Yazma yetkili aktif kullanici:</b> Yok"))
 
-        lines.append(f"<b>Misafir oturum sayısı:</b> {len(guest_sessions)}")
-        lines.append("<i>Misafir oturumlar salt okunur çalışır.</i>")
+        lines.append(tr("<b>Misafir oturum sayısı:</b> {count}").format(count=len(guest_sessions)))
+        lines.append(tr("<i>Misafir oturumlar salt okunur çalışır.</i>"))
         self.session_info_label.setText("<br>".join(lines))
 
     def closeEvent(self, event):
@@ -240,9 +240,8 @@ class LoginDialog(QDialog):
         if not self.login_successful:
             reply = QMessageBox.question(
                 self,
-                "Cikis",
-                "Giriş yapmadan çıkmak istediğinizden emin misiniz?\n\n"
-                "Uygulama kapatılacaktır.",
+                tr("Çıkış"),
+                tr("Giriş yapmadan çıkmak istediğinizden emin misiniz?\n\nUygulama kapatılacaktır."),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )

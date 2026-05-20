@@ -1,5 +1,29 @@
 # Değişiklik Günlüğü
 
+## v3.2.2 (20 Mayıs 2026)
+
+### Yeni Özellikler
+- **Red Flag Sebep/Dialog Sistemi:** Revizyonlar artık sadece işaretlenmekle kalmıyor, işaret sebebi (zorunlu), işaretleyen kullanıcı ve tarih bilgisiyle kaydediliyor.
+- **Red Flag Dashboard:** Ana sekme çubuğuna "🚩 Red Flag" sekmesi eklendi. Tüm işaretli revizyonlar tek tabloda listeleniyor, her biri için işareti kaldırma butonu mevcut.
+- **Gelişmiş Filtreleme:** "Kırmızı Bayrak (Red Flag)" filtresi eklendi - projeler flag durumuna göre (Evet/Hayır) filtrelenebiliyor.
+- **Canlı Aramada Red Flag Desteği:** Arama çubuğuna "red", "flag", "kırmızı", "bayrak", "hatalı" yazıldığında işaretli tüm projeler listeleniyor.
+- **Tooltip Desteği:** Revizyon tablosunda "Hatalı" sütununda fare ile üzerine gelindiğinde sebep, kullanıcı ve tarih bilgisi görüntüleniyor.
+
+### Hata Düzeltmeleri
+- Rapor panelindeki "Rapor Oluştur (Excel)" butonunun çalışmaması düzeltildi (sinyal bağlantısı eklendi).
+- `report_service.py` içinde `return True` sonrasındaki 42 satır erişilemez dead code temizlendi.
+- `main_controller.py`'da eksik yazi_render sinyal bağlantıları `_render_connections` listesine eklendi.
+- Animasyonlarda tekrarlanan fade in/out işlemlerinde `QGraphicsOpacityEffect` birikerek bellek sızıntısına neden oluyordu; düzeltildi.
+
+### Güvenlik
+- Varsayılan kullanıcı şifreleri artık `PROJETAKIP_ADMIN_USER` / `PROJETAKIP_ADMIN_PASS` ortam değişkenlerinden okunabiliyor.
+
+### Veritabanı
+- `revizyonlar` tablosuna `flag_reason`, `flag_date`, `flag_user` kolonları eklendi.
+- Mevcut `is_flagged=1` kayıtlarına dokunulmaz; yeni kolonları `NULL` olarak kalır, uygulama NULL-safe çalışır.
+
+---
+
 ## v3.1.0 (15 Mayıs 2026)
 
 ### Hata Düzeltmeleri ve Geliştirmeler

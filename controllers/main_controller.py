@@ -78,6 +78,14 @@ class MainController:
                 (self.pdf_worker.image_ready, self.window._on_image_ready),
                 (self.pdf_worker.error, self.window._on_image_error),
             ]
+            if hasattr(self.window, "_start_yazi_render"):
+                self._render_connections.append(
+                    (self.window._start_yazi_render, self.pdf_worker.render_yazi)
+                )
+            if hasattr(self.pdf_worker, "yazi_image_ready"):
+                self._render_connections.append(
+                    (self.pdf_worker.yazi_image_ready, self.window._on_yazi_image_ready)
+                )
             self.render_thread.start()
         except Exception:
             pass

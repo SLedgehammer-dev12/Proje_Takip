@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v3.2.1"
+APP_VERSION = "v3.2.2"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,21 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v3.2.2": [
+        "YENİ ÖZELLİK: Red Flag geliştirmesi - revizyon işaretleme artık sebep, kullanıcı ve tarih bilgisiyle kaydediliyor.",
+        "YENİ ÖZELLİK: Red Flag Dialog - revizyon işaretlenirken sebep açıklaması zorunlu hale getirildi; işaret kaldırılırken mevcut sebep gösteriliyor.",
+        "YENİ ÖZELLİK: Red Flag Dashboard - ana sekme çubuğuna '🚩 Red Flag' sekmesi eklendi; tüm işaretli revizyonlar listeleniyor.",
+        "YENİ ÖZELLİK: Gelişmiş filtreleme - 'Kırmızı Bayrak (Red Flag)' filtresi eklendi; projeler flag durumuna göre filtrelenebiliyor.",
+        "YENİ ÖZELLİK: Canlı arama - arama çubuğuna 'red', 'flag', 'kırmızı', 'bayrak', 'hatalı' yazıldığında işaretli projeler listeleniyor.",
+        "YENİ ÖZELLİK: Revizyon tablosunda 'Hatalı' sütununa tooltip eklendi; sebep, kullanıcı ve tarih fare ile görülebiliyor.",
+        "DÜZELTME: Rapor panelindeki 'Rapor Oluştur' butonu artık çalışıyor (sinyal bağlantısı eklendi).",
+        "DÜZELTME: report_service.py'de 42 satır erişilemez dead code temizlendi.",
+        "DÜZELTME: main_controller.py'de eksik yazi_render sinyal bağlantıları _render_connections listesine eklendi.",
+        "DÜZELTME: Animasyonlarda tekrarlanan fade in/out işlemlerinde QGraphicsOpacityEffect bellek sızıntısı giderildi.",
+        "GÜVENLİK: Varsayılan kullanıcı şifreleri kod yerine PROJETAKIP_ADMIN_USER/PASS ortam değişkenlerinden alınabiliyor.",
+        "YENİDEN YAPILANDIRMA: Veritabanı migration - revizyonlar tablosuna flag_reason, flag_date, flag_user kolonları eklendi.",
+        "BAĞIMLILIK: Mevcut tüm özellikler korunuyor; geriye dönük tam uyumluluk sağlanıyor.",
+    ],
     "v3.2.1": [
         "DÜZELTME: UI layout hatası düzeltildi; menüler, sıralama combo'su, filtre butonları ve arama çubuğu artık tüm temalarda görünür.",
         "DÜZELTME: Menü kurulum metodları (_setup_file_menu vb.) AnaPencere sınıfına doğru şekilde bağlandı.",

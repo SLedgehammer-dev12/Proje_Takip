@@ -26,6 +26,7 @@ from .yazi_ekler_dialog import YaziEklerDialog
 from .proje_sec_dialog import ProjeSecDialog
 from .login_dialog import LoginDialog
 from .export_dialog import ProjectExportDialog
+from .red_flag_dialog import RedFlagDialog
 
 __all__ = [
     "ProjeDialog",
@@ -44,5 +45,6 @@ __all__ = [
     "CokluAciklamaDialog",
     "LoginDialog",
     "ProjectExportDialog",
+    "RedFlagDialog",
 ]
 

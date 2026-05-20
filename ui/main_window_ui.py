@@ -165,7 +165,17 @@ def _setup_projeler_panel(self):
     self.sekme_widget.addTab(_setup_rapor_paneli(self), "Gösterge Paneli")
 
     self.sekme_widget.addTab(_setup_log_panel(self), "Loglar")
+
+    self.sekme_widget.addTab(_setup_red_flag_panel(self), "🚩 Red Flag")
     return panel
+
+
+def _setup_red_flag_panel(self):
+    from ui.panels.red_flag_panel import RedFlagPanel
+    from PySide6.QtCore import QTimer
+    self.red_flag_panel = RedFlagPanel(db=getattr(self, "db", None), window=self)
+    QTimer.singleShot(0, self.red_flag_panel.refresh)
+    return self.red_flag_panel
 
 
 def _setup_log_panel(self):

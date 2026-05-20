@@ -137,6 +137,12 @@ class AdvancedFilterManager(QObject):
                 "operators": ["eşittir"],
                 "options": ["Takipte", "Takipten Çıkarıldı", "Takipsiz"],
             },
+            "kirmizi_bayrak": {
+                "label": "Kırmızı Bayrak (Red Flag)",
+                "type": FilterType.BOOLEAN,
+                "operators": ["eşittir"],
+                "options": ["Evet", "Hayır"],
+            },
         }
 
     def _populate_dynamic_options(self):
@@ -241,6 +247,8 @@ class AdvancedFilterManager(QObject):
             return self._build_takip_notu_condition(operator, value)
         if field == "takip_durumu":
             return self._build_takip_durumu_condition(value)
+        if field == "kirmizi_bayrak":
+            return self._build_kirmizi_bayrak_condition(value)
 
         if condition.filter_type == FilterType.TEXT:
             # Special-case: yazı numarası filters
@@ -589,6 +597,19 @@ class AdvancedFilterManager(QObject):
         if not parts:
             return "", []
         return "(" + " OR ".join(parts) + ")", []
+
+    def _build_kirmizi_bayrak_condition(self, value: str) -> tuple[str, list]:
+        show_flagged = (value == "Evet")
+        if show_flagged:
+            return (
+                "(EXISTS (SELECT 1 FROM revizyonlar rev WHERE rev.proje_id = p.id AND rev.is_flagged = 1))",
+                [],
+            )
+        else:
+            return (
+                "(NOT EXISTS (SELECT 1 FROM revizyonlar rev WHERE rev.proje_id = p.id AND rev.is_flagged = 1))",
+                [],
+            )
 
     def get_filtered_projects(self, sort_by: str = "id_desc") -> List[ProjeModel]:
         """

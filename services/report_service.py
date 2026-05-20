@@ -839,49 +839,6 @@ class ReportService(QObject):
             thread.start()
             return True
 
-            self.logger.info(f"Rapor oluşturuluyor: {file_path}")
-
-            # Show progress dialog
-            progress = QProgressDialog(
-                "Rapor oluşturuluyor...", "İptal", 0, 0, self.parent
-            )
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setMinimumDuration(0)
-            progress.setValue(0)
-            QApplication.processEvents()
-
-            # Generate report
-            success = rapor_olustur_func(self.db.db_adi, file_path)
-
-            progress.close()
-
-            if success:
-                # Ask user if they want to open the report
-                answer = QMessageBox.information(
-                    self.parent,
-                    "Rapor Oluşturuldu",
-                    f"PDF raporu başarıyla oluşturuldu:\n\n{file_path}\n\n"
-                    "Raporu şimdi açmak ister misiniz?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes,
-                )
-
-                # Open file if user chose yes
-                if answer == QMessageBox.Yes:
-                    self._open_file(file_path)
-
-                self.logger.info("Rapor başarıyla oluşturuldu")
-                return True
-            else:
-                QMessageBox.warning(
-                    self.parent,
-                    "Hata",
-                    "Rapor oluşturulurken bir hata oluştu.\n"
-                    "Lütfen log dosyasını kontrol edin.",
-                )
-                self.logger.error("Rapor oluşturulamadı")
-                return False
-
         except ImportError as e:
             self.logger.error(f"Rapor modülü import hatası: {e}")
             QMessageBox.critical(

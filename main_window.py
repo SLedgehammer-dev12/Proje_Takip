@@ -893,11 +893,13 @@ class AnaPencere(QMainWindow):
                 # Apply search filter on top
                 sorgu = (self.arama_kutusu.text() if hasattr(self, "arama_kutusu") else "").strip().lower()
                 if sorgu:
+                    red_flag_keywords = ("red", "kırmızı", "flag", "bayrak", "🚩", "flagged", "hatalı", "hatali", "red flag")
                     filtered_by_search = [
                         p for p in (projects or [])
                         if sorgu in (getattr(p, "proje_kodu", "") or "").lower()
                         or sorgu in (getattr(p, "proje_ismi", "") or "").lower()
                         or sorgu in (getattr(p, "hiyerarsi", "") or "").lower()
+                        or (sorgu in red_flag_keywords and getattr(p, "is_flagged", 0))
                     ]
                 else:
                     filtered_by_search = projects or []
@@ -1888,6 +1890,7 @@ class AnaPencere(QMainWindow):
 
         self.report_panel = ReportPanel()
         self.rapor_tablosu = self.report_panel.rapor_tablosu  # Compatibility
+        self.report_panel.report_requested.connect(self.rapor_olustur)
         return self.report_panel
 
     def _setup_revizyonlar_panel(self):
@@ -3243,12 +3246,15 @@ class AnaPencere(QMainWindow):
         # Apply any search box filter ON TOP of the incoming filtered list
         sorgu = (self.arama_kutusu.text() if hasattr(self, "arama_kutusu") else "").strip().lower()
         if sorgu:
+            red_flag_keywords = ("red", "kırmızı", "flag", "bayrak", "🚩", "flagged", "hatalı", "hatali", "red flag")
             filtered_by_search = []
             for p in projects:
                 kod = (getattr(p, "proje_kodu", "") or "").lower()
                 isim = (getattr(p, "proje_ismi", "") or "").lower()
                 hiy = (getattr(p, "hiyerarsi", "") or "").lower()
                 if sorgu in kod or sorgu in isim or sorgu in hiy:
+                    filtered_by_search.append(p)
+                elif sorgu in red_flag_keywords and getattr(p, "is_flagged", 0):
                     filtered_by_search.append(p)
         else:
             filtered_by_search = projects
@@ -3934,11 +3940,41 @@ class AnaPencere(QMainWindow):
         elif secim == indir_onay_red_action:
             self.onay_red_yazisini_indir()
         elif secim == flag_action:
-            # Toggle flag
-            success = self.db.revizyon_flag_durumu_guncelle(rev.id, not bool(is_flagged))
-            if success:
-                self._refresh_current_project(keep_rev_id=rev.id)
-                self._invalidate_filter_cache_and_reload(force_sync=True)
+            self._handle_revision_flag_toggle(rev)
+
+    def _handle_revision_flag_toggle(self, rev):
+        from dialogs.red_flag_dialog import RedFlagDialog
+
+        is_flagged = int(getattr(rev, "is_flagged", 0) or 0)
+        revizyon_info = f"{rev.revizyon_kodu} ({rev.proje_rev_no})"
+        current_user = self.auth_service.get_current_username()
+
+        if is_flagged:
+            existing_reason = getattr(rev, "flag_reason", None) or "Belirtilmemiş"
+            dialog = RedFlagDialog(
+                self, revizyon_info, current_user,
+                existing_reason=existing_reason
+            )
+            if dialog.exec() == RedFlagDialog.Accepted:
+                data = dialog.get_flag_data()
+                success = self.db.revizyon_flag_durumu_guncelle(
+                    rev.id, False
+                )
+                if success:
+                    self._refresh_current_project(keep_rev_id=rev.id)
+                    self._invalidate_filter_cache_and_reload(force_sync=True)
+        else:
+            dialog = RedFlagDialog(self, revizyon_info, current_user)
+            if dialog.exec() == RedFlagDialog.Accepted:
+                data = dialog.get_flag_data()
+                success = self.db.revizyon_flag_durumu_guncelle(
+                    rev.id, True,
+                    flag_reason=data["reason"],
+                    flag_user=data["user"],
+                )
+                if success:
+                    self._refresh_current_project(keep_rev_id=rev.id)
+                    self._invalidate_filter_cache_and_reload(force_sync=True)
 
     # --- GÜNCELLEME (ADIM 5.3) ---
     def _kategori_gorunumu_context_menu(self, position):
@@ -4020,9 +4056,21 @@ class AnaPencere(QMainWindow):
                     revisions = self.db.revizyonlari_getir(pid)
                     if revisions:
                         latest = revisions[0]
-                        if self.db.revizyon_flag_durumu_guncelle(latest.id, True):
-                            self._invalidate_filter_cache_and_reload(keep_project_id=pid, force_sync=True)
-                            self.logger.info(f"Proje {pid} en son revizyonu ({latest.id}) red flag olarak işaretlendi.")
+                        revizyon_info = f"{latest.revizyon_kodu} ({latest.proje_rev_no})"
+                        current_user = self.auth_service.get_current_username()
+                        from dialogs.red_flag_dialog import RedFlagDialog
+                        dialog = RedFlagDialog(
+                            self, revizyon_info, current_user
+                        )
+                        if dialog.exec() == RedFlagDialog.Accepted:
+                            data = dialog.get_flag_data()
+                            if self.db.revizyon_flag_durumu_guncelle(
+                                latest.id, True,
+                                flag_reason=data["reason"],
+                                flag_user=data["user"],
+                            ):
+                                self._invalidate_filter_cache_and_reload(keep_project_id=pid, force_sync=True)
+                                self.logger.info(f"Proje {pid} en son revizyonu ({latest.id}) red flag olarak işaretlendi.")
                 except Exception as e:
                     self.logger.error(f"Proje flag ekleme hatası: {e}")
             flag_action = menu.addAction("🚩 Hatalı Kayıt Olarak İşaretle")
@@ -6627,12 +6675,15 @@ class AnaPencere(QMainWindow):
             if not sorgu:
                 filtered = list(self.tum_projeler)
             else:
+                red_flag_keywords = ("red", "kırmızı", "flag", "bayrak", "🚩", "flagged", "hatalı", "hatali", "red flag")
                 filtered = []
                 for p in self.tum_projeler:
                     kod = (getattr(p, "proje_kodu", "") or "").lower()
                     isim = (getattr(p, "proje_ismi", "") or "").lower()
                     hiy = (getattr(p, "hiyerarsi", "") or "").lower()
                     if sorgu in kod or sorgu in isim or sorgu in hiy:
+                        filtered.append(p)
+                    elif sorgu in red_flag_keywords and getattr(p, "is_flagged", 0):
                         filtered.append(p)
 
             # Direkt _populate_ui çağrısı: load_projects yerine _populate_ui kullanarak

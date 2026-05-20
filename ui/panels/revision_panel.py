@@ -143,6 +143,19 @@ class RevisionPanel(QWidget):
                 
                 is_flagged = int(getattr(rev, "is_flagged", 0) or 0)
                 item.setText(10, tr("🚩 Hatalı") if is_flagged else "-")
+                if is_flagged:
+                    flag_reason = getattr(rev, "flag_reason", None) or ""
+                    flag_user = getattr(rev, "flag_user", None) or ""
+                    flag_date = getattr(rev, "flag_date", None) or ""
+                    tooltip_parts = []
+                    if flag_reason:
+                        tooltip_parts.append(f"Sebep: {flag_reason}")
+                    if flag_user:
+                        tooltip_parts.append(f"Kullanıcı: {flag_user}")
+                    if flag_date:
+                        tooltip_parts.append(f"Tarih: {flag_date}")
+                    if tooltip_parts:
+                        item.setToolTip(10, "\n".join(tooltip_parts))
 
                 # Tema bazlı renkleri al
                 current_variant = getattr(self.window(), "_tok_variant", "light")
