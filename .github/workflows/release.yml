@@ -1,0 +1,62 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/requirements.txt
+          pip install pyinstaller
+
+      - name: Build Windows executable
+        shell: powershell
+        run: |
+          .\scripts\build_onefile_release.ps1 -Python "python"
+
+      - name: Extract version for release
+        id: get_version
+        shell: powershell
+        run: |
+          $content = Get-Content -Path config.py -Raw -Encoding UTF8
+          $match = [regex]::Match($content, 'APP_VERSION\s*=\s*"([^"]+)"')
+          $version = $match.Groups[1].Value
+          echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload assets to release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.get_version.outputs.version }}"
+          $releaseDir = "release\$version"
+          $exeAsset = Get-ChildItem -Path $releaseDir -Filter "*.exe" | Select-Object -First 1
+          $zipAsset = Get-ChildItem -Path $releaseDir -Filter "*.zip" | Select-Object -First 1
+          $checksumAsset = Get-ChildItem -Path $releaseDir -Filter "SHA256SUMS" | Select-Object -First 1
+
+          if ($exeAsset) {
+            gh release upload "$version" "$($exeAsset.FullName)" --clobber
+          }
+          if ($zipAsset) {
+            gh release upload "$version" "$($zipAsset.FullName)" --clobber
+          }
+          if ($checksumAsset) {
+            gh release upload "$version" "$($checksumAsset.FullName)" --clobber
+          }
