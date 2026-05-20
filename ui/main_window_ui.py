@@ -530,6 +530,16 @@ def _setup_file_menu(self, menubar):
         yedek_menu, "folder-open", "Yedekleri Listele...", self.yedekleri_goster
     )
     dosya_menu.addSeparator()
+    from PySide6.QtGui import QAction
+    self.user_manager_action = QAction("👤 Kullanıcı Yönetimi", self)
+    self.user_manager_action.setIcon(QIcon.fromTheme("system-users"))
+    try:
+        self.user_manager_action.triggered.connect(self._show_user_manager)
+    except Exception:
+        pass
+    self.user_manager_action.setVisible(False)  # Görünürlük _setup_permissions'da ayarlanacak
+    dosya_menu.addAction(self.user_manager_action)
+    dosya_menu.addSeparator()
     try:
         from PySide6.QtGui import QAction
         update_action = QAction("🔄 Güncellemeleri Kontrol Et...", self)

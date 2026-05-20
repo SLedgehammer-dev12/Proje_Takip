@@ -138,10 +138,32 @@ class AuthService:
         if self.is_guest:
             return action in ["read", "view", "download", "export"]
         if self.current_user:
+            role = self.current_user.get("role", "admin")  # backward compatible default
+            if action == "admin":
+                return role == "admin"
             if action == "write":
-                return self._write_session_active
-            return True
+                return role in ("admin", "editor") and self._write_session_active
+            if action in ("read", "view", "download", "export"):
+                return True
+            return role in ("admin", "editor")
         return False
+
+    def is_admin(self) -> bool:
+        return self.has_permission("admin")
+
+    def is_editor(self) -> bool:
+        if self.is_guest:
+            return False
+        if self.current_user:
+            return self.current_user.get("role", "viewer") in ("admin", "editor")
+        return False
+
+    def get_current_role(self) -> str:
+        if self.is_guest:
+            return "misafir"
+        if self.current_user:
+            return self.current_user.get("role", "viewer")
+        return "unknown"
 
     def get_current_username(self) -> str:
         if self.current_user:

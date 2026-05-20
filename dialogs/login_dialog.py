@@ -26,7 +26,7 @@ class LoginDialog(QDialog):
         self.auth_service = auth_service
         self.login_successful = False
         self._presence_refresh_timer = QTimer(self)
-        self._presence_refresh_timer.setInterval(3000)
+        self._presence_refresh_timer.setInterval(10000)
         self._presence_refresh_timer.timeout.connect(self.refresh_active_sessions)
         self.setup_ui()
         self.refresh_active_sessions()

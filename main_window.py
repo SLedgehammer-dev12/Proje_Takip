@@ -165,8 +165,9 @@ class AnaPencere(QMainWindow):
         self._acilista_yedek_al()
 
         # Cache mekanizması - sık kullanılan verileri önbelleğe al
+        from collections import OrderedDict
         self._kategori_yolu_cache: Dict[int, str] = {}
-        self._proje_detay_cache: Dict[int, ProjeModel] = {}
+        self._proje_detay_cache: Dict[int, ProjeModel] = OrderedDict()
         self._cache_max_size = self._ui_cache_max_size
 
         self.kategori_items_map: Dict[int, QTreeWidgetItem] = {}
@@ -219,7 +220,8 @@ class AnaPencere(QMainWindow):
         self.mem_timer.timeout.connect(self._update_memory_label)
 
         self.presence_timer = QTimer(self)
-        self.presence_timer.setInterval(20000)
+        # Normal: 60sn, Performance: 120sn (set in _apply_performance_profile_settings)
+        self.presence_timer.setInterval(60000)
         self.presence_timer.timeout.connect(self._heartbeat_presence)
 
         # Placeholder label, created in toolbar setup
@@ -489,6 +491,10 @@ class AnaPencere(QMainWindow):
         if hasattr(self, "mem_timer") and self.mem_timer is not None:
             self.mem_timer.setInterval(
                 180000 if self.is_performance_mode_enabled() else 60000
+            )
+        if hasattr(self, "presence_timer") and self.presence_timer is not None:
+            self.presence_timer.setInterval(
+                120000 if self.is_performance_mode_enabled() else 60000
             )
         render_service = self._preview_render_service
         if render_service is not None and hasattr(
@@ -3305,7 +3311,8 @@ class AnaPencere(QMainWindow):
     # =============================================================================
 
     def _on_search_text_changed(self):
-        self.filter_timer.start(300)
+        interval = 500 if getattr(self, "_performance_mode", False) else 300
+        self.filter_timer.start(interval)
 
     def _on_list_selection_changed(self):
         # Preview timer gereksiz - revizyonlari_yukle içinde otomatik tetikleniyor
@@ -3488,9 +3495,21 @@ class AnaPencere(QMainWindow):
                 self.logger.warning("Write lease inactive: UI switched to read-only mode")
             else:
                 self.logger.info(f"Full access granted to user: {self.auth_service.get_current_username()}")
-                
+
+            # Admin-only: Kullanıcı Yönetimi menüsü
+            if hasattr(self, "user_manager_action"):
+                self.user_manager_action.setVisible(self.auth_service.is_admin())
         except Exception as e:
             self.logger.error(f"Permission setup error: {e}", exc_info=True)
+
+    def _show_user_manager(self):
+        """Open the user management dialog (admin only)."""
+        if not self.auth_service.is_admin():
+            QMessageBox.warning(self, "Yetki Red", "Bu bölüm sadece admin kullanıcılar içindir.")
+            return
+        from dialogs.user_manager_dialog import UserManagerDialog
+        dialog = UserManagerDialog(self, self.auth_service, self.db.user_repo)
+        dialog.exec()
 
     def _update_user_status_label(self):
         """Update status bar to show current user or guest mode."""

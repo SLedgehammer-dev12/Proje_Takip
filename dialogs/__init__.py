@@ -27,6 +27,7 @@ from .proje_sec_dialog import ProjeSecDialog
 from .login_dialog import LoginDialog
 from .export_dialog import ProjectExportDialog
 from .red_flag_dialog import RedFlagDialog
+from .user_manager_dialog import UserManagerDialog
 
 __all__ = [
     "ProjeDialog",
@@ -46,5 +47,6 @@ __all__ = [
     "LoginDialog",
     "ProjectExportDialog",
     "RedFlagDialog",
+    "UserManagerDialog",
 ]
 

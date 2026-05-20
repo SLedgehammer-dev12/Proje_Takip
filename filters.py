@@ -618,17 +618,20 @@ class AdvancedFilterManager(QObject):
         """
         # Cache kontrolü
         filter_hash = hash(
-            str(
-                [
-                    (
-                        f.field,
-                        f.operator,
-                        str(f.value),
-                        bool(getattr(f, "all_revisions", False)),
-                    )
-                    for f in self.active_filters
-                ]
-            ) + hash(sort_by)
+            (
+                str(
+                    [
+                        (
+                            f.field,
+                            f.operator,
+                            str(f.value),
+                            bool(getattr(f, "all_revisions", False)),
+                        )
+                        for f in self.active_filters
+                    ]
+                ),
+                sort_by,
+            )
         )
 
         if (

@@ -63,6 +63,7 @@ class ProjeTakipDB:
         self.run_migrations()
         self._ensure_yazi_dokumanlari_schema()
         self._ensure_revizyonlar_metadata_schema()
+        self._ensure_users_schema()
         self._indeksleri_olustur()
 
         # Create initial users if needed (also re-hashes broken entries)
@@ -362,6 +363,7 @@ class ProjeTakipDB:
                     password_hash TEXT NOT NULL,
                     full_name TEXT,
                     role TEXT DEFAULT 'admin',
+                    is_active INTEGER DEFAULT 1,
                     created_at TIMESTAMP,
                     last_login TIMESTAMP
                 )"""
@@ -547,6 +549,25 @@ class ProjeTakipDB:
                 exc_info=True,
             )
             raise
+
+    def _ensure_users_schema(self):
+        """Ensure users table has is_active column (for existing databases)."""
+        try:
+            columns = {
+                row[1]
+                for row in self.cursor.execute("PRAGMA table_info(users)").fetchall()
+            }
+            pending = []
+            if "is_active" not in columns:
+                pending.append("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+            if not pending:
+                return
+            with self.transaction(track_change=False):
+                for sql in pending:
+                    self.cursor.execute(sql)
+            self.logger.info("users schema extended with is_active column.")
+        except Exception as e:
+            self.logger.error(f"users schema migration failed: {e}", exc_info=True)
 
     def _normalize_yazi_tarih_key(self, yazi_tarih: Optional[str]) -> str:
         if yazi_tarih is None:

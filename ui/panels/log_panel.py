@@ -191,12 +191,14 @@ class LogPanel(QWidget):
         self._update_summary()
 
     def set_performance_mode(self, enabled: bool):
-        enabled = bool(enabled)
         if enabled == self._performance_mode:
             return
         self._performance_mode = enabled
-        if enabled:
-            self.set_live_updates_enabled(False)
+        self._flush_live_timer.setInterval(
+            500 if enabled else 120
+        )
+        self._flush_live_timer.stop()
+        self.detach_live_logging()
         self._update_summary()
 
     def closeEvent(self, event):

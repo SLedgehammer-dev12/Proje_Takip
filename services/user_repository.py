@@ -6,7 +6,7 @@ Extracted from database.py to reduce coupling and improve testability.
 import datetime
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import bcrypt
@@ -16,6 +16,9 @@ except ImportError:
     logging.getLogger(__name__).warning(
         "bcrypt not available - user authentication will not work. Install with: pip install bcrypt"
     )
+
+
+VALID_ROLES = ("admin", "editor", "viewer")
 
 
 class UserRepository:
@@ -48,34 +51,162 @@ class UserRepository:
     # User CRUD
     # -------------------------------------------------------------------------
 
+    def _row_to_dict(self, row) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "password_hash": row[2],
+            "full_name": row[3],
+            "role": row[4],
+            "is_active": bool(row[5]),
+            "created_at": row[6],
+            "last_login": row[7],
+        }
+
     def get_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get user information by username."""
         try:
             self._db.cursor.execute(
-                """SELECT id, username, password_hash, full_name, role, created_at, last_login
+                """SELECT id, username, password_hash, full_name, role, is_active, created_at, last_login
                    FROM users WHERE username = ?""",
                 (username,),
             )
-            row = self._db.cursor.fetchone()
-            if row:
-                return {
-                    "id": row[0],
-                    "username": row[1],
-                    "password_hash": row[2],
-                    "full_name": row[3],
-                    "role": row[4],
-                    "created_at": row[5],
-                    "last_login": row[6],
-                }
-            return None
+            return self._row_to_dict(self._db.cursor.fetchone())
         except Exception as e:
             self.logger.error(f"Failed to get user: {e}", exc_info=True)
             return None
 
+    def get_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get user information by user ID."""
+        try:
+            self._db.cursor.execute(
+                """SELECT id, username, password_hash, full_name, role, is_active, created_at, last_login
+                   FROM users WHERE id = ?""",
+                (user_id,),
+            )
+            return self._row_to_dict(self._db.cursor.fetchone())
+        except Exception as e:
+            self.logger.error(f"Failed to get user by id: {e}", exc_info=True)
+            return None
+
+    def create_user(self, username: str, password: str, full_name: str = "", role: str = "viewer") -> Optional[int]:
+        """Create a new user. Returns user ID on success, None on failure."""
+        if role not in VALID_ROLES:
+            self.logger.error(f"Invalid role: {role}")
+            return None
+        if not username or not password:
+            return None
+        if not BCRYPT_AVAILABLE:
+            self.logger.error("bcrypt not available - cannot create user")
+            return None
+        try:
+            password_hash = self.hash_password(password)
+            with self._db.transaction():
+                self._db.cursor.execute(
+                    """INSERT INTO users (username, password_hash, full_name, role, is_active, created_at)
+                       VALUES (?, ?, ?, ?, 1, ?)""",
+                    (username.strip(), password_hash, full_name.strip(), role, datetime.datetime.now()),
+                )
+                user_id = self._db.cursor.lastrowid
+            self.logger.info(f"User created: {username} (role={role})")
+            return user_id
+        except Exception as e:
+            self.logger.error(f"Failed to create user {username}: {e}", exc_info=True)
+            return None
+
+    def update_user(self, user_id: int, full_name: Optional[str] = None, role: Optional[str] = None, is_active: Optional[bool] = None) -> bool:
+        """Update user details. Only non-None fields are updated."""
+        try:
+            fields = []
+            params = []
+            if full_name is not None:
+                fields.append("full_name = ?")
+                params.append(full_name.strip())
+            if role is not None:
+                if role not in VALID_ROLES:
+                    self.logger.error(f"Invalid role: {role}")
+                    return False
+                fields.append("role = ?")
+                params.append(role)
+            if is_active is not None:
+                fields.append("is_active = ?")
+                params.append(1 if is_active else 0)
+            if not fields:
+                return False
+            params.append(user_id)
+            with self._db.transaction():
+                self._db.cursor.execute(
+                    f"UPDATE users SET {', '.join(fields)} WHERE id = ?",
+                    params,
+                )
+            self.logger.info(f"User {user_id} updated: {', '.join(fields)}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to update user {user_id}: {e}", exc_info=True)
+            return False
+
+    def change_password(self, user_id: int, new_password: str) -> bool:
+        """Change a user's password."""
+        if not new_password:
+            return False
+        if not BCRYPT_AVAILABLE:
+            self.logger.error("bcrypt not available - cannot change password")
+            return False
+        try:
+            password_hash = self.hash_password(new_password)
+            with self._db.transaction():
+                self._db.cursor.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (password_hash, user_id),
+                )
+            self.logger.info(f"Password changed for user {user_id}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to change password for user {user_id}: {e}", exc_info=True)
+            return False
+
+    def delete_user(self, user_id: int) -> bool:
+        """Delete a user. Cannot delete your own session's user (check externally)."""
+        try:
+            with self._db.transaction():
+                self._db.cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                deleted = self._db.cursor.rowcount > 0
+            if deleted:
+                self.logger.info(f"User {user_id} deleted")
+            return deleted
+        except Exception as e:
+            self.logger.error(f"Failed to delete user {user_id}: {e}", exc_info=True)
+            return False
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        """List all users (password_hash excluded from return)."""
+        try:
+            self._db.cursor.execute(
+                """SELECT id, username, full_name, role, is_active, created_at, last_login
+                   FROM users ORDER BY username ASC"""
+            )
+            return [
+                {
+                    "id": row[0],
+                    "username": row[1],
+                    "full_name": row[2] or "",
+                    "role": row[3],
+                    "is_active": bool(row[4]),
+                    "created_at": row[5],
+                    "last_login": row[6],
+                }
+                for row in self._db.cursor.fetchall()
+            ]
+        except Exception as e:
+            self.logger.error(f"Failed to list users: {e}", exc_info=True)
+            return []
+
     def verify(self, username: str, password: str) -> Optional[Dict[str, Any]]:
-        """Verify user credentials and return user info if valid."""
+        """Verify user credentials and return user info if valid. Only active users can log in."""
         user = self.get_by_username(username)
-        if user and self.verify_password(password, user["password_hash"]):
+        if user and user.get("is_active", False) and self.verify_password(password, user["password_hash"]):
             return user
         return None
 
@@ -147,8 +278,8 @@ class UserRepository:
                     password_hash = self.hash_password(user_data["password"])
                     with self._db.transaction():
                         self._db.cursor.execute(
-                            """INSERT INTO users (username, password_hash, full_name, role, created_at)
-                               VALUES (?, ?, ?, ?, ?)
+                            """INSERT INTO users (username, password_hash, full_name, role, is_active, created_at)
+                               VALUES (?, ?, ?, ?, 1, ?)
                                ON CONFLICT(username) DO UPDATE SET
                                    password_hash = excluded.password_hash,
                                    full_name = excluded.full_name,
