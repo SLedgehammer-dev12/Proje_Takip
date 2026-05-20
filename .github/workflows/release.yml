@@ -30,6 +30,7 @@ jobs:
         shell: powershell
         run: |
           .\scripts\build_onefile_release.ps1 -Python "python"
+          echo "Build completed."
 
       - name: Extract version for release
         id: get_version
@@ -40,23 +41,35 @@ jobs:
           $version = $match.Groups[1].Value
           echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Upload assets to release
+      - name: Create release and upload assets
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = "${{ steps.get_version.outputs.version }}"
           $releaseDir = "release\$version"
+
+          Write-Host "Creating GitHub release for $version ..."
+
+          $releaseNotes = "release\$version.md"
+          if (-not (Test-Path $releaseNotes)) {
+            $releaseNotes = "docs\releases\$version.md"
+          }
+
+          $assets = @()
           $exeAsset = Get-ChildItem -Path $releaseDir -Filter "*.exe" | Select-Object -First 1
           $zipAsset = Get-ChildItem -Path $releaseDir -Filter "*.zip" | Select-Object -First 1
           $checksumAsset = Get-ChildItem -Path $releaseDir -Filter "SHA256SUMS" | Select-Object -First 1
 
-          if ($exeAsset) {
-            gh release upload "$version" "$($exeAsset.FullName)" --clobber
+          $assetArgs = @()
+          if ($exeAsset) { $assetArgs += $exeAsset.FullName }
+          if ($zipAsset) { $assetArgs += $zipAsset.FullName }
+          if ($checksumAsset) { $assetArgs += $checksumAsset.FullName }
+
+          if (Test-Path $releaseNotes) {
+            gh release create "$version" --title "$version" --notes-file "$releaseNotes" $assetArgs
+          } else {
+            gh release create "$version" --title "$version" --notes "Release $version" $assetArgs
           }
-          if ($zipAsset) {
-            gh release upload "$version" "$($zipAsset.FullName)" --clobber
-          }
-          if ($checksumAsset) {
-            gh release upload "$version" "$($checksumAsset.FullName)" --clobber
-          }
+
+          Write-Host "Release $version created with assets: $($assetArgs -join ', ')"
