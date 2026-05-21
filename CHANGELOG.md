@@ -1,5 +1,28 @@
 # Değişiklik Günlüğü
 
+## v3.2.3 (20 Mayıs 2026)
+
+### Yeni Özellikler
+- **Kullanıcı Yönetimi (Admin Panel):** Dosya menüsünden "Kullanıcı Yönetimi" ile kullanıcı ekleme, düzenleme, silme ve şifre sıfırlama.
+- **Rol Sistemi:** Admin (tam yetki), Editör (yazma + okuma), İzleyici (salt okunur) rolleri eklendi. Admin panel sadece admin kullanıcılara açık.
+- **Varsayılan Admin Kullanıcı:** `admin / Botas.2025` (Sistem Yöneticisi) eklendi. `alperb.yilmaz` ve `omer.erbas` admin olarak kaldı.
+
+### Güvenlik
+- `role` varsayılan değeri `admin` → `editor` olarak değiştirildi. Yeni kullanıcılar artık admin olarak oluşturulmuyor.
+- Kullanıcı yönetimi sadece admin rolüne sahip kullanıcılara açık.
+
+### Performans İyileştirmeleri
+- Presence heartbeat: 20sn → 60sn (perf modunda 120sn)
+- Log panel flush interval: 120ms → 500ms (perf modunda)
+- Login dialog session poll: 3sn → 10sn
+- Canlı arama debounce: 300ms → 500ms (perf modunda)
+- Proje detay cache LRU limitli (OrderedDict)
+
+### Hata Düzeltmeleri
+- Gelişmiş filtreleme cache hash hesaplama hatası düzeltildi (`str + int` concatenation).
+
+---
+
 ## v3.2.2 (20 Mayıs 2026)
 
 ### Yeni Özellikler

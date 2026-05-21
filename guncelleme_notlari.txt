@@ -1,5 +1,16 @@
 PROJE TAKIP SISTEMI - GÜNCELLEME NOTLARI
 ========================================
+--- Sürüm: v3.2.3 ---
+  * KULLANICI YONETIMI: Dosya menüsüne "Kullanıcı Yönetimi" eklendi (admin kullanıcılar için).
+  * ROL SISTEMI: Admin (tam yetki), Editor (yazma), Izleyici (salt okunur) rolleri.
+  * YENI ADMIN USER: 'admin' kullanıcısı eklendi (sifre: Botas.2025).
+  * GUVENLIK: Yeni kullanıcılar varsayılan olarak editor rolüyle oluşturulur.
+  * PERFORMANS: Presence heartbeat 20sn -> 60sn (perf modunda 120sn).
+  * PERFORMANS: Log panel flush 120ms -> 500ms (perf modunda).
+  * PERFORMANS: Login dialog session poll 3sn -> 10sn.
+  * PERFORMANS: Canli arama debounce 300ms -> 500ms (perf modunda).
+  * DUZELTME: Gelismis filtreleme cache hash hatasi giderildi.
+  * TEST: test_filters_core.py eklendi (9 test). Toplam 200 test geciyor.
 --- Sürüm: v3.2.2 ---
   * RED FLAG SEBEP SİSTEMİ: Revizyon işaretleme artık sebep, kullanıcı ve tarih bilgisiyle kaydediliyor. İşaretleme sırasında sebep girişi zorunlu.
   * RED FLAG DIALOG: İşaret kaldırılırken mevcut sebep, kullanıcı ve tarih bilgisi gösteriliyor.
