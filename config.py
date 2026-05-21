@@ -15,7 +15,7 @@ from project_types import (
 # UYGULAMA SÜRÜM BİLGİLERİ VE GÜNCELLEME GEÇMİŞİ
 # =============================================================================
 APP_NAME = "Proje Takip Sistemi"
-APP_VERSION = "v3.2.2"
+APP_VERSION = "v3.2.3"
 APP_ICON_FILE = "app_icon.ico"
 APP_USER_MODEL_ID = "com.botas.projetakipsistemi"
 # Bu sürümde yapılan otomasyon ve optimizasyonların kaynak bilgisi
@@ -40,6 +40,21 @@ PANEL_WATERMARK_OPACITY = 0.055
 PANEL_WATERMARK_SCALE = 0.18
 
 CHANGELOG = {
+    "v3.2.3": [
+        "YENİ ÖZELLİK: Kullanıcı Yönetimi (Admin panel) - Dosya menüsünden kullanıcı ekleme/düzenleme/silme/şifre sıfırlama.",
+        "YENİ ÖZELLİK: Rol sistemi - admin (tam yetki), editor (yazma+okuma), viewer (salt okunur).",
+        "YENİ ÖZELLİK: Varsayılan admin kullanıcı 'admin/Botas.2025' eklendi.",
+        "GÜVENLİK: Yeni kullanıcılar varsayılan olarak 'editor' rolüyle oluşturuluyor (artık admin değil).",
+        "GÜVENLİK: Kullanıcı yönetimi paneli sadece admin rolündeki kullanıcılara açık.",
+        "PERFORMANS: Presence heartbeat 20sn'den 60sn'ye çıkarıldı (perf modunda 120sn).",
+        "PERFORMANS: Log panel flush intervalı 120ms -> 500ms (perf modunda).",
+        "PERFORMANS: Login dialog session poll 3sn -> 10sn.",
+        "PERFORMANS: Canlı arama debounce 300ms -> 500ms (perf modunda).",
+        "PERFORMANS: Proje detay cache'i LRU limitli (OrderedDict).",
+        "DÜZELTME: Gelişmiş filtreleme cache hash hatası düzeltildi (str + int concatenation).",
+        "TEST: test_filters_core.py eklendi (9 test - hash hesaplama, tüm filtre tipleri).",
+        "TEST: Toplam 200 birim testi başarıyla geçiyor.",
+    ],
     "v3.2.2": [
         "YENİ ÖZELLİK: Red Flag geliştirmesi - revizyon işaretleme artık sebep, kullanıcı ve tarih bilgisiyle kaydediliyor.",
         "YENİ ÖZELLİK: Red Flag Dialog - revizyon işaretlenirken sebep açıklaması zorunlu hale getirildi; işaret kaldırılırken mevcut sebep gösteriliyor.",

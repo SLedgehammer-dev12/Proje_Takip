@@ -362,7 +362,7 @@ class ProjeTakipDB:
                     username TEXT NOT NULL UNIQUE,
                     password_hash TEXT NOT NULL,
                     full_name TEXT,
-                    role TEXT DEFAULT 'admin',
+                    role TEXT DEFAULT 'editor',
                     is_active INTEGER DEFAULT 1,
                     created_at TIMESTAMP,
                     last_login TIMESTAMP

@@ -247,6 +247,12 @@ class UserRepository:
                 "full_name": "Ömer Erbaş",
                 "role": "admin",
             },
+            {
+                "username": "admin",
+                "password": "Botas.2025",
+                "full_name": "Sistem Yöneticisi",
+                "role": "admin",
+            },
         ]
 
     _INITIAL_USERS = None
